@@ -1,0 +1,9 @@
+# RCPP Implementation
+
+`conda create --name rcpp`
+
+`conda activate rcpp`
+
+`pip install -r requirements.txt`
+
+Download the kaggle dataset to `credit-scoring/data`.
