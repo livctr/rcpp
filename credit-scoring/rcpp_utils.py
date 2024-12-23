@@ -165,6 +165,8 @@ class NoCostFeaturesUpdater(FeaturesUpdater):
         self.onehot = np.zeros((1, len(model.coef_[0])))
         self.onehot[0, sensitive_idx] = 1
 
+    # ||x(lambda) - x(lambda')|| <= eps ||lambda - lambda'|| <= 0.5 * (0.05) = 0.025
+
     def best_response(self, X, Y_proba, thresh):
         X_start = X + self.eps * thresh * self.onehot
         return X_start
