@@ -170,3 +170,28 @@ class NoCostFeaturesUpdater(FeaturesUpdater):
     def best_response(self, X, Y_proba, thresh):
         X_start = X + self.eps * thresh * self.onehot
         return X_start
+
+
+class Bound:
+
+    def __init__(self, n, delta):
+        self.n = n
+        self.delta = delta
+    
+    def bound(self):
+        pass
+
+
+class HoeffdingBound(Bound):
+
+    def __init__(self, n, delta, bounds=(0, 1)):
+        super().__init__(n, delta)
+        self.lower, self.upper = bounds
+
+    def bound(self):
+        return (self.upper - self.lower) * np.sqrt(1 / 2 / self.n * np.log(1 / self.delta))
+
+
+class HoeffdingBentkusBound(Bound):
+
+    pass
