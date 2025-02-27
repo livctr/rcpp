@@ -17,18 +17,50 @@ def sigmoid(X):
     return 1 / (1 + np.exp(-X))
 
 
-def type_II_error(Y, Y_pred):
-    return np.mean((Y == 1) & (Y_pred == 0))
+def type_II_error(Y, Y_proba, threshold):
+    """Y=actual, Y_proba=predicted probability, threshold=threshold"""
+    return np.mean((Y == 1) * (Y_proba < 1 - threshold))
+
+def type_II_error_approx(Y, Y_proba, threshold, softness):
+    return np.mean((Y == 1) * (sigmoid(softness * (1 - threshold - Y_proba))))
 
 
-class SoftLoss:
-    """Soft-cutoff loss function (assumption 1)."""
-    def __init__(self, softness):
-        self.softness = softness
+class UCBBound:
 
-    def __call__(self, Y, Y_prob, threshold):
-        """Evaluates y_true * sigmoid(softness * (1 - threshold - Y_prob))"""
-        return np.mean(Y * sigmoid(self.softness * (1 - threshold - Y_prob)))
+    def __init__(self, alpha, tau, eps, L, n, delta, t):
+        self.alpha = alpha
+        self.tau = tau
+        self.eps = eps
+        self.L = L
+        self.n = n
+        self.delta = delta
+        self.t = t
+
+    def bound(self):
+        pass
+
+
+class HoeffdingBound(UCBBound):
+
+    def __init__(self, bounds=(0, 1), **kwargs,):
+        super().__init__(**kwargs)
+        self.lower, self.upper = bounds
+
+    def bound(self):
+        return self.alpha - 16 / (self.tau - self.eps * self.L) * (
+            (self.upper - self.lower) * np.sqrt(
+                1. / 2 / self.n * np.log(1. / self.delta)
+            )
+        )
+
+# class WSRBound(Bound):
+
+#     def __init__(self, n, delta, bounds=(0, 1)):
+#         super().__init__(n, delta)
+#         self.lower, self.upper = bounds
+
+#     def bound(self):
+#         return np.sqrt(1 / 2 / self.n * np.log(1 / self.delta))
     
 
 class ThreshUpdater:
@@ -38,16 +70,19 @@ class ThreshUpdater:
 
     def update_postdeploy(self, loss_violation: bool):
         return
+    
 
 
 class SoftLossThreshUpdater(ThreshUpdater):
     """Threshold update based on soft loss."""
 
-    def __init__(self, soft_loss: SoftLoss, delta: float, alpha: float,
+
+    def __init__(self, loss_softness: float, tau: float, alpha: float, bound: UCBBound,
                  thresh_lower_bound=0, thresh_upper_bound=1):
-        self.soft_loss = soft_loss
-        self.delta = delta
+        self.loss_softness = loss_softness
+        self.tau = tau
         self.alpha = alpha
+        self.bound = bound
         self.thresh_lower_bound = thresh_lower_bound
         self.thresh_upper_bound = thresh_upper_bound
 
@@ -55,9 +90,8 @@ class SoftLossThreshUpdater(ThreshUpdater):
         """Updates the threshold. Assumes constant n throughout time.
         """
         n = len(Y_cal)
-        bound = self.alpha - np.sqrt((1. / 2 / n) * np.log(1 / self.delta))
 
-        partial_loss = lambda threshold: self.soft_loss(Y_cal, Y_cal_proba, threshold)
+        partial_loss = lambda threshold: type_II_error_approx(Y_cal, Y_cal_proba, threshold, self.loss_softness) - self.tau * threshold
 
         # determine min threshold at which risk is controlled
         low, high = self.thresh_lower_bound, self.thresh_upper_bound
@@ -171,27 +205,3 @@ class NoCostFeaturesUpdater(FeaturesUpdater):
         X_start = X + self.eps * thresh * self.onehot
         return X_start
 
-
-class Bound:
-
-    def __init__(self, n, delta):
-        self.n = n
-        self.delta = delta
-    
-    def bound(self):
-        pass
-
-
-class HoeffdingBound(Bound):
-
-    def __init__(self, n, delta, bounds=(0, 1)):
-        super().__init__(n, delta)
-        self.lower, self.upper = bounds
-
-    def bound(self):
-        return (self.upper - self.lower) * np.sqrt(1 / 2 / self.n * np.log(1 / self.delta))
-
-
-class HoeffdingBentkusBound(Bound):
-
-    pass
