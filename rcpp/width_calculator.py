@@ -4,11 +4,58 @@ import numpy as np
 from scipy.stats import norm
 
 
+
 class WidthCalculator(ABC):
     @abstractmethod
     def get_width(self, delta_prime: float, N: int):
         """Returns the width depending on the number of iterations required."""
         pass
+
+
+class CLTWidth(WidthCalculator):
+    """
+    Computes the width of the confidence interval using the Central
+    Limit Theorem (CLT) for a given empirical risk. Does not assume
+    anything about the loss distribution.
+    """
+    def __init__(self, alpha: float, loss_max: float = 1.0, tol=1e-5):
+        self.alpha = alpha
+        self.loss_max = loss_max
+        self.tol = tol
+
+    def _calc_clt_bound(self, delta_prime, N, emp_risk, loss_max = 1):
+        """
+        Calculate confidence width based on the maximum variance possible if the
+        risk level is `emp_risk`.
+        """
+        p = emp_risk  / loss_max
+        max_var = 1 / (N - 1) * (p * N * (loss_max - emp_risk) ** 2 + (1 - p) * N * emp_risk ** 2)
+        return norm.ppf(1 - delta_prime / 2) * np.sqrt(max_var) / np.sqrt(N)
+
+    def get_width(self, delta_prime, N):
+        """
+        Given `alpha`, calculates the confidence width necessary to ensure risk
+        control throughout all deployments of lambda.
+        """
+        # Aggregate `_clt_bound` over possible emp_risks.
+        # Since _clt_bound is monotonically increasing in `emp_risk` until p=0.5
+        # Then it decreases
+        max_clt_bound = self._calc_clt_bound(delta_prime, N, 0.5 * self.loss_max, self.loss_max)
+        # The `max_clt_bound` is already sufficient
+        if 0.5 * self.loss_max + max_clt_bound < self.alpha:
+            return max_clt_bound
+
+        low_emp_risk, high_emp_risk = 0, self.loss_max * 0.5
+
+        while low_emp_risk < high_emp_risk - self.tol:
+            mid_emp_risk = (low_emp_risk + high_emp_risk) / 2
+            confidence_width = self._calc_clt_bound(delta_prime, N, mid_emp_risk, self.loss_max)
+            ucb = mid_emp_risk + confidence_width
+            if ucb > self.alpha:
+                high_emp_risk = mid_emp_risk
+            else:
+                low_emp_risk = mid_emp_risk
+        return confidence_width
 
 
 class CLTQuantileVarianceWidth(WidthCalculator):

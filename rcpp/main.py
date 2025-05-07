@@ -1,16 +1,36 @@
 """
 Main file for RCPP algorithm. 
 """
+from typing import List, Tuple
+
 from rcpp.width_calculator import WidthCalculator
-from rcpp.risk_measures import RiskMeasure
+from rcpp.risk_measure import RiskMeasure
 from rcpp.performativity_simulator import PerformativitySimulator
 from rcpp.loss_simulator import LossSimulator
 
 import numpy as np
 from tqdm import tqdm
 
+import matplotlib.pyplot as plt
+import numpy as np
+from typing import List, Dict
+import os
 
-def binary_search_solver(objective, lambda_low, lambda_high, tol=1e-6, max_iter=100):
+from copy import deepcopy
+
+
+
+class Trajectory:
+    def __init__(self, lambda_hat, risks_tt, risks_tm1_t, lambdas, guaranteed_T, delta_lambda):
+        self.lambda_hat = lambda_hat
+        self.risks_tt = risks_tt
+        self.risks_tm1_t = risks_tm1_t
+        self.lambdas = lambdas
+        self.guaranteed_T = guaranteed_T
+        self.delta_lambda = delta_lambda
+
+
+def binary_search_solver(objective, lambda_low, lambda_high, tol=1e-6, max_iter=100) -> float:
     if objective(lambda_low) <= 0:
         return lambda_low
 
@@ -35,7 +55,7 @@ def find_guaranteed_T(
     tightness: float,
     tau: float,
     lambda_max: float,
-    max_T: int = 1000):
+    max_T: int = 1000) -> Tuple[int, float]:
     """
     Searches 1 through T for the minimum number of iterations for guaranteed convergence .
     """
@@ -66,15 +86,15 @@ def run_trajectory(
     risk_measure: RiskMeasure,
     performativity_simulator: PerformativitySimulator,
     loss_simulator: LossSimulator,
-    args):
+    args) -> Trajectory:
   
     # Note: the numbers correspond to the Algorithm in paper
     # 1. Initialize lambda^{(0)}
     lambda_ = args.lambda_max  # initialize the deployment threshold
     lambda_hat = lambda_       # deployment threshold to return
     lambdas = [lambda_]
-    losses_tt = []
-    losses_tm1_t = []
+    risks_tt = []
+    risks_tm1_t = []
 
     # Jointly solve for T, delta_prime, and delta_lambda
     T, delta_lambda = find_guaranteed_T(width_calculator,
@@ -90,7 +110,7 @@ def run_trajectory(
         Z_test_tm1 = performativity_simulator.simulate_shift(Z_test, lambda_)
 
         # [tracking] Calculate the realized loss L(lambda^{(t-1)}, lambda^{(t-1)})
-        losses_tt.append(
+        risks_tt.append(
             loss_simulator.calc_loss(Z_test_tm1, lambda_, do_new_sample=True)
         )
 
@@ -111,7 +131,7 @@ def run_trajectory(
         lambdas.append(lambda_)
 
         # [tracking] Calculate the realized loss L(lambda^{(t-1)}, lambda^{(t)})
-        losses_tm1_t.append(
+        risks_tm1_t.append(
             loss_simulator.calc_loss(Z_test_tm1, lambda_new, do_new_sample=True)
         )
 
@@ -124,13 +144,228 @@ def run_trajectory(
 
     # Calculate the L(lambda_hat, lambda_hat)
     Z_shifted = performativity_simulator.simulate_shift(Z_test, lambda_hat)
-    losses_tt.append(
+    risks_tt.append(
         loss_simulator.calc_loss(Z_shifted, lambda_hat, do_new_sample=True)
     )
 
-    return {
-        "lambda_hat": lambda_hat,
-        "losses_tt": losses_tt,
-        "losses_tm1_t": losses_tm1_t,
-        "lambdas": lambdas,
-    }
+    return Trajectory(
+        lambda_hat=lambda_hat,
+        risks_tt=risks_tt,
+        risks_tm1_t=risks_tm1_t,
+        lambdas=lambdas,
+        guaranteed_T=T,
+        delta_lambda=delta_lambda,
+    )
+
+
+def plot_lambda_vs_iteration(
+    gammas: List[float],
+    trajectories: List[Trajectory],
+    args,
+    save_dir: str = "./figures"):
+    """
+    Plot the trajectory of lambda over iterations for different gamma values.
+    """
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+
+    plt.figure(figsize=(7, 4))
+    plt.ylim(0, args.lambda_max)
+    colors = ['blue', 'green', 'red', 'orange', 'black', 'purple', 'brown']
+    for i in range(len(gammas)):
+        plt.plot(trajectories[i].lambdas, label=rf"$\gamma$ = {gammas[i]}", color=colors[i], alpha=0.7, linewidth=2)
+    plt.xlabel('Iteration', fontsize=14)
+    plt.ylabel('Threshold', fontsize=14)
+    plt.ylim(0, 1.1)
+    plt.text(2, 0.3, f"Guaranteed convergence by T={args.T}", fontsize=14)
+    plt.legend(fontsize=12)
+    plt.grid(True)
+    plt.tight_layout()
+    if save_dir:
+        save_path = os.path.join(save_dir, "lambda_vs_iteration.png")
+        plt.savefig(save_path, dpi=300)
+        print(f"Saved lambda plot to {save_path}")
+
+    plt.figure(figsize=(7, 4))
+    max_iters = 0
+    for i in range(len(gammas)):
+        trajectory = trajectories[i]
+        diffs = trajectory.lambdas[1:] - trajectory.lambdas[:-1]
+        max_iters = max(max_iters, len(diffs))
+
+        plt.plot(range(1, len(diffs) + 1), diffs, marker='o', markersize=2,
+                 label=rf"$\gamma$ = {gammas[i]}", color=colors[i], alpha=0.5)
+
+    # `delta_lambda` is the same for all gammas
+    plt.axhline(y=trajectory.delta_lambda, color='gray', linestyle='--', linewidth=1.5, label=rf"$\Delta\lambda$")
+    plt.xlabel('Iteration', fontsize=14)
+    plt.ylabel(r'$|\lambda_t - \lambda_{t-1}|$', fontsize=14)
+    plt.xticks(ticks=range(max_iters + 1), labels=[str(i) for i in range(max_iters + 1)], fontsize=12)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    if save_dir:
+        save_path = os.path.join(save_dir, "lambda_diff_vs_iteration.png")
+        plt.savefig(save_path, dpi=300)
+        print(f"Saved lambda plot to {save_path}")
+
+
+def plot_loss_vs_iteration(
+    trajectories: List[Trajectory],
+    args,
+    save_dir: str = "./figures"
+):
+    num_trajectories = len(trajectories)
+    lower_q, upper_q = args.delta / 2, 1 - args.delta / 2
+
+    # Each of these arrays is of length 2 * max_t
+    # It contains max_t pairs of L(lambda_t, lambda_t) and L(lambda_{t-1}, lambda_t) in that order
+    risk_lower_bnd = []
+    risk_mean = []
+    risk_upper_bnd = []
+
+    while True:
+        keep_going = False
+        iter = len(risk_lower_bnd) // 2
+
+        risks_tm1_ts = []
+        risks_tts = []
+        for i in range(num_trajectories):
+            trajectory = trajectories[i]
+            if iter < len(trajectory.risks_tm1_t):
+                risks_tts.append(trajectory.risks_tt[iter])
+                risks_tm1_ts.append(trajectory.risks_tm1_t[iter])
+                keep_going = True
+        
+        if not keep_going:
+            break
+    
+        risk_lower_bnd.append(np.quantile(risks_tts, lower_q))
+        risk_lower_bnd.append(np.quantile(risks_tm1_ts, lower_q))
+        risk_mean.append(np.mean(risks_tts))
+        risk_mean.append(np.mean(risks_tm1_ts))
+        risk_upper_bnd.append(np.quantile(risks_tts, upper_q))
+        risk_upper_bnd.append(np.quantile(risks_tm1_ts, upper_q))
+    
+    # Get x-axis values
+    offset = 0.05
+    num_iters = len(risk_lower_bnd) // 2
+    ts = np.empty(2 * num_iters)
+    ts[0::2] = np.arange(num_iters) - offset
+    ts[1::2] = np.arange(num_iters) + offset
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(ts, risk_mean, color='green', label='Risk')
+    plt.fill_between(ts, risk_lower_bnd, risk_upper_bnd, color='orange', alpha=0.4)
+
+    plt.axhline(args.alpha, linestyle='--', color='red', label='Upper bound $\\alpha$')
+    plt.axhline(args.alpha - args.tightness, linestyle='--', color='green', label='Lower Bound')
+
+    plt.xlabel("Iteration", fontsize=14)
+    plt.ylabel("Loss", fontsize=14)
+    # Set x-axis to show 1-based iteration numbers
+    plt.xticks(ticks=range(num_iters), labels=[str(i+1) for i in range(num_iters)], fontsize=12)
+    plt.ylim(0, 0.5)
+    plt.legend(fontsize=12)
+    plt.grid(True)
+    plt.tight_layout()
+    if save_dir:
+        save_path = os.path.join(save_dir, "loss_vs_iteration.png")
+        plt.savefig(save_path, dpi=300)
+        print(f"Saved loss plot to {save_path}")
+
+
+
+def plot_final_loss_vs_iteration(
+    trajectories: List[Trajectory],
+    args,
+    save_dir: str = "./figures"
+):
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+    
+    points = [
+        (len(trajectory.risks_tt) - 1, trajectory.risks_tt[-1]) for trajectory in trajectories
+    ]
+    points = np.array(points)
+
+    plt.figure(figsize=(8, 5))
+    plt.scatter(points[:, 0], points[:, 1], color='red', alpha=0.6, marker='x')
+
+    plt.axhline(args.alpha, linestyle='--', color='#d62728', label=r'Upper Bound $\alpha$', linewidth=1.5)  # red
+    plt.axhline(args.alpha - args.tightness, linestyle='--', color='#2ca02c', label=r'Lower Bound', linewidth=1.5)  # green
+
+    plt.xlabel("Stopping Iteration $T$", fontsize=14)
+    plt.ylabel("Risk", fontsize=14)
+
+    xlim_lower = np.min(points[:, 0]) - 1
+    xlim_upper = np.max(points[:, 0]) + 1
+    plt.xlim(xlim_lower, xlim_upper)
+
+    ylim_lower = min(args.alpha - args.tightness * 1.5, points[:, 1].min())
+    ylim_upper = max(args.alpha + args.tightness * 1.5, points[:, 1].max())
+
+    plt.ylim(ylim_lower, ylim_upper)
+    plt.legend(fontsize=12)
+    plt.grid(True)
+    plt.tight_layout()
+
+    if save_dir:
+        save_path = os.path.join(save_dir, "final_loss_vs_iteration.png")
+        plt.savefig(save_path, dpi=300)
+        print(f"Saved final loss plot to {save_path}")
+
+
+def run_experiment(
+    Z_cal,
+    Z_test,
+    width_calculator: WidthCalculator,
+    risk_measure: RiskMeasure,
+    performativity_simulator: PerformativitySimulator,
+    loss_simulator: LossSimulator,
+    args,
+    gammas: List[float] = [0.1, 0.2, 0.5, 1, 1.2, 1.5],
+    save_dir: str = "./figures",
+    num_iters: int = 1000,
+):
+    """
+    Run the RCPP algorithm and plot the results.
+    """
+    # plot 1: change gamma, i.e. magnitude of distribution shift
+    gamma_trajectories = []
+    for gamma in gammas:
+        args_copy = deepcopy(args)
+        args_copy.gamma = gamma
+        trajectory = run_trajectory(
+            Z_cal,
+            Z_test,
+            width_calculator,
+            risk_measure,
+            performativity_simulator,
+            loss_simulator,
+            args_copy
+        )
+        gamma_trajectories.append(trajectory)
+    
+    # Plot 1
+    plot_lambda_vs_iteration(gammas, gamma_trajectories, args, save_dir=save_dir)
+
+    trajectories = []
+    for i in tqdm(range(num_iters), desc="Running trials"):
+        trajectory = run_trajectory(
+            Z_cal,
+            Z_test,
+            width_calculator,
+            risk_measure,
+            performativity_simulator,
+            loss_simulator,
+            args
+        )
+        trajectories.append(trajectory)
+
+    # Plot 2/3: plot risk level v. iteration
+    plot_loss_vs_iteration(trajectories, args, save_dir=save_dir)
+
+    # Plot 4: plot final risk level v. iteration
+    plot_final_loss_vs_iteration(trajectories, args, save_dir=save_dir)
+    
