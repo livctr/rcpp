@@ -24,7 +24,7 @@ class CVaRRiskMeasure(RiskMeasure):
     def __init__(self, beta: float):
         self.beta = beta
 
-    def calc_cvar_risk(self, losses: np.ndarray) -> float:
+    def calculate(self, losses: np.ndarray) -> float:
         """Returns the beta-CVaR risk given an array of losses."""
         sorted_losses = np.sort(losses)
 
