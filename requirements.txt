@@ -1,7 +1,7 @@
-ipykernel
-kaggle
+accelerate
+bitsandbytes
 matplotlib
-numpy
-pandas
 scikit-learn
+torch
+transformers
 tqdm

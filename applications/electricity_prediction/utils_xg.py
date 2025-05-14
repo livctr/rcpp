@@ -1,43 +1,28 @@
-import time
-import random
-import os
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
-from catboost import CatBoostClassifier
-from xgboost import XGBClassifier
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import accuracy_score
 from sklearn.tree import _tree
 from sklearn import tree
-import matplotlib.pyplot as plt
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import torch
-from collections import Counter
-from sklearn.model_selection import train_test_split
-import scipy.stats as stats
-from tqdm import tqdm
 
 
-def evaluate(gen_c, xtrain, ytrain, xval, yval, xtest, ytest, clf):
+def evaluate(gen_c, xtrain, ytrain, xval, yval, clf):
     gen_c = np.array(gen_c).reshape(-1,1)
     len_train, len_val = len(xtrain), len(xval)
-    gen_c_train, gen_c_val, gen_c_test = gen_c[:len_train], gen_c[len_train:len_train + len_val], gen_c[len_train + len_val:]
+    gen_c_train, gen_c_val = gen_c[:len_train], gen_c[len_train:len_train + len_val]  #, gen_c[len_train + len_val:]
     enc = MinMaxScaler()
     enc = enc.fit(gen_c_train)
     gen_c_train = enc.transform(gen_c_train)
     gen_c_val = enc.transform(gen_c_val)
-    gen_c_test = enc.transform(gen_c_test)
     new_train = np.concatenate([xtrain, gen_c_train], axis = -1)
     new_val = np.concatenate([xval, gen_c_val], axis = -1)
-    new_test = np.concatenate([xtest, gen_c_test], axis = -1)
     clf.fit(new_train, ytrain)
     xtrain_pred = clf.predict(new_train)
     xval_pred = clf.predict(new_val)
-    xtest_pred = clf.predict(new_test)
     train_acc = accuracy_score(xtrain_pred, ytrain)
     val_acc = accuracy_score(xval_pred, yval)
-    test_acc = accuracy_score(xtest_pred, ytest)
-    return train_acc, val_acc, test_acc, clf 
+    return train_acc, val_acc, clf 
 
 def get_cart(gen_c, xtrain, ytrain, xval, yval, seed):
     gen_c = np.array(gen_c).reshape(-1,1)
@@ -78,7 +63,7 @@ def gen_prompt(r_list, dt_list, score_list, idx, add_constraint=False):
     text += ". We also have corresponding decision tree (CART) to predict 'y' from x1"
     for i in range(1, idx):
         text += f", x{i+1}"
-    text += ". The rules are arragned in ascending order based on their scores evaluated with logistic_regression classifier, where higher scores indicates better quality."
+    text += ". The rules are arranged in ascending order based on their scores evaluated with logistic_regression classifier, where higher scores indicates better quality."
     text += "\n\n"
     for i in range(len(new_r)):
         text += f"Rule to generate x{idx}:\n{new_r[i]}\n"
@@ -94,7 +79,7 @@ def gen_prompt(r_list, dt_list, score_list, idx, add_constraint=False):
     for i in range(1, idx-1):
         text += f", x{i+1}"
     text += f" in square brackets. Variables x1 ~ x{idx} are in [0, 1]. You can use various numpy function. Do not use np.log, np.sqrt, np.arcsin, np.arccos, np.arctan. Do not divide. When divide or using log, use (x+1) term. Think creatively. The new rule must be written with Python grammar."    
-    text += f" Return the rule only with no explanation."
+    text += f" Return the rule only with no explanation. Begin with `x{idx} = [`"
     return text
 
 def tree_to_code(tree, feature_names):

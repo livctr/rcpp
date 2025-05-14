@@ -5,6 +5,13 @@ import numpy as np
 
 
 class PerformativitySimulator(ABC):
+
+    def reset(self) -> None:
+        """
+        Resets the simulator to its initial state.
+        """
+        return
+
     @abstractmethod
     def simulate_shift(self,
                        Z_base: Union[List[np.ndarray], None],

@@ -60,7 +60,6 @@ def find_guaranteed_T(
     Searches 1 through T for the minimum number of iterations for guaranteed convergence .
     """
     best_T = None
-    best_result = None
 
     for T in range(1, max_T + 1):
         width = width_calculator.get_width(delta / T, N)
@@ -86,30 +85,42 @@ def run_trajectory(
     risk_measure: RiskMeasure,
     performativity_simulator: PerformativitySimulator,
     loss_simulator: LossSimulator,
-    args) -> Trajectory:
+    args,
+    control_risk: bool = True,
+    num_iters: int = 10) -> Trajectory:
   
+    performativity_simulator.reset()
     # Note: the numbers correspond to the Algorithm in paper
     # 1. Initialize lambda^{(0)}
-    lambda_ = args.lambda_max  # initialize the deployment threshold
-    lambda_hat = lambda_       # deployment threshold to return
+    if control_risk:
+        lambda_ = args.lambda_max  # initialize the deployment threshold
+        lambda_hat = lambda_       # deployment threshold to return
+        # Jointly solve for T, delta_prime, and delta_lambda
+        T, delta_lambda = find_guaranteed_T(
+            width_calculator,
+            args.delta, args.N, args.tightness, args.tau, args.lambda_max
+        )
+        bound = width_calculator.get_width(args.delta / T, args.N)
+    else:
+        lambda_ = 0.0
+        lambda_hat = 0.0
+        T, delta_lambda = None, None
+
     lambdas = [lambda_]
     risks_tt = []
     risks_tm1_t = []
-
-    # Jointly solve for T, delta_prime, and delta_lambda
-    T, delta_lambda = find_guaranteed_T(
-        width_calculator,
-        args.delta, args.N, args.tightness, args.tau, args.lambda_max
-    )
-    bound = width_calculator.get_width(args.delta / T, args.N)
-
     Z_cal_tm1 = Z_cal
     Z_test_tm1 = Z_test
+    iter = 0
 
     while True:
         # Apply previous threshold lambda^{(t-1)}
-        Z_cal_tm1 = performativity_simulator.simulate_shift(Z_cal, Z_cal_tm1, lambda_, args.gamma)
-        Z_test_tm1 = performativity_simulator.simulate_shift(Z_test, Z_test_tm1, lambda_, args.gamma)
+        cal_len, test_len = len(Z_cal[0]), len(Z_test[0])
+        Z = [np.concatenate([Z_cal[i], Z_test[i]]) for i in range(len(Z_cal))]
+        Z_tm1 = [np.concatenate([Z_cal_tm1[i], Z_test_tm1[i]]) for i in range(len(Z_cal_tm1))]
+        Z_tm1 = performativity_simulator.simulate_shift(Z, Z_tm1, lambda_, args.gamma)
+        Z_cal_tm1 = [Z_tm1[i][:cal_len] for i in range(len(Z_tm1))]
+        Z_test_tm1 = [Z_tm1[i][cal_len:] for i in range(len(Z_tm1))]
 
         # [tracking] Calculate the realized loss L(lambda^{(t-1)}, lambda^{(t-1)})
         risks_tt.append(
@@ -122,16 +133,19 @@ def run_trajectory(
         idx = np.random.choice(len(Z_cal_tm1[0]), size=args.N, replace=True) 
         Z_sample = [Z[idx] for Z in Z_cal_tm1]
 
-        # 5. Find lambda^{(t)}_mid
-        def loss_at_new_lambda(lambda_new):
-            losses = loss_simulator.calc_loss(Z_sample, lambda_new, do_new_sample=False)
-            emp_risk = risk_measure.calculate(losses)
-            return emp_risk + bound + args.tau * (lambda_ - lambda_new) - args.alpha
-        loss_simulator.calc_loss(Z_sample, lambda_, do_new_sample=True)  # Set the randomness
-        lambda_mid = binary_search_solver(loss_at_new_lambda, 0, 1)
+        if control_risk:
+            # 5. Find lambda^{(t)}_mid
+            def loss_at_new_lambda(lambda_new):
+                losses = loss_simulator.calc_loss(Z_sample, lambda_new, do_new_sample=False)
+                emp_risk = risk_measure.calculate(losses)
+                return emp_risk + bound + args.tau * (lambda_ - lambda_new) - args.alpha
+            loss_simulator.calc_loss(Z_sample, lambda_, do_new_sample=True)  # Set the randomness
+            lambda_mid = binary_search_solver(loss_at_new_lambda, 0, 1)
 
-        # 6. Set new lambda^{(t)}
-        lambda_new = min(lambda_, lambda_mid)
+            # 6. Set new lambda^{(t)}
+            lambda_new = min(lambda_, lambda_mid)
+        else:
+            lambda_new = 0.0
         lambdas.append(lambda_new)
 
         # [tracking] Calculate the realized loss L(lambda^{(t-1)}, lambda^{(t)})
@@ -142,11 +156,16 @@ def run_trajectory(
         )
 
         # 7-8. Stopping condition 
-        if lambda_new >= lambda_ - delta_lambda:
+        if control_risk and lambda_new >= lambda_ - delta_lambda:
             lambda_hat = lambda_new
             break
 
         lambda_ = lambda_new
+
+        iter += 1
+        if not control_risk and iter >= num_iters:
+            lambda_hat = 0.0
+            break
 
     # Calculate the L(lambda_hat, lambda_hat)
     Z_shifted = performativity_simulator.simulate_shift(Z_test, Z_test_tm1, lambda_hat, args.gamma)
@@ -181,17 +200,17 @@ def plot_lambda_vs_iteration(
     plt.ylim(0, args.lambda_max)
     colors = ['blue', 'green', 'red', 'orange', 'black', 'purple', 'brown']
     for i in range(len(gammas)):
-        plt.plot(trajectories[i].lambdas, label=rf"$\gamma$ = {gammas[i]}", color=colors[i], alpha=0.7, linewidth=2)
+        plt.plot(trajectories[i].lambdas, label=rf"$\gamma$ = {gammas[i]}" if len(gammas) > 1 else None, color=colors[i], alpha=0.7, linewidth=2)
     plt.xlabel('Iteration', fontsize=14)
     plt.ylabel('Threshold', fontsize=14)
-    plt.ylabel(r'$\lambda^{(t)}$', fontsize=14)
+    plt.ylabel(r'$\lambda_t$', fontsize=14)
     plt.ylim(0, 1.1)
-    plt.text(0, 0.1, f"Guaranteed convergence by T={trajectories[i].guaranteed_T}", fontsize=14)
+    print(f"Guaranteed convergence by T={trajectories[i].guaranteed_T}")
     plt.legend(fontsize=12)
     plt.grid(True)
     plt.tight_layout()
     if save_dir:
-        save_path = os.path.join(save_dir, "lambda_vs_iteration.png")
+        save_path = os.path.join(save_dir, "lambda_vs_iteration.pdf")
         plt.savefig(save_path, dpi=300)
         print(f"Saved lambda plot to {save_path}")
 
@@ -202,18 +221,18 @@ def plot_lambda_vs_iteration(
         diffs = np.abs(trajectory.lambdas[1:] - trajectory.lambdas[:-1])
         max_iters = max(max_iters, len(diffs))
         plt.plot(range(1, len(diffs) + 1), diffs, marker='o', markersize=2,
-                 label=rf"$\gamma$ = {gammas[i]}", color=colors[i], alpha=0.5)
+                 label=rf"$\gamma$ = {gammas[i]}" if len(gammas) > 1 else None, color=colors[i], alpha=0.5)
 
     # `delta_lambda` is the same for all gammas
     plt.axhline(y=trajectory.delta_lambda, color='gray', linestyle='--', linewidth=1.5, label=rf"$\Delta\lambda$")
     plt.xlabel('Iteration', fontsize=14)
-    plt.ylabel(r'$|\lambda^{(t)} - \lambda^{(t-1)}|$', fontsize=14)
+    plt.ylabel(r'$\lambda_{t-1} - \lambda_t$', fontsize=14)
     plt.xticks(ticks=range(max_iters + 1), labels=[str(i) for i in range(max_iters + 1)], fontsize=12)
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     if save_dir:
-        save_path = os.path.join(save_dir, "lambda_diff_vs_iteration.png")
+        save_path = os.path.join(save_dir, "lambda_diff_vs_iteration.pdf")
         plt.savefig(save_path, dpi=300)
         print(f"Saved lambda plot to {save_path}")
 
@@ -260,14 +279,14 @@ def plot_loss_vs_iteration(
     ts[0::2] = np.arange(num_iters) - offset
     ts[1::2] = np.arange(num_iters) + offset
 
-    plt.figure(figsize=(6, 4))
+    plt.figure(figsize=(7, 4))
 
     # plt.plot(ts, risk_mean, color='blue', label="Risk", alpha=1.0, linewidth=5)
     for trajectory in trajectories:
         trajectory_risk = np.empty(len(trajectory.risks_tt[:-1]) + len(trajectory.risks_tm1_t))
         trajectory_risk[0::2] = trajectory.risks_tt[:-1]
         trajectory_risk[1::2] = trajectory.risks_tm1_t
-        plt.plot(ts[:len(trajectory_risk)], trajectory_risk, color='blue', alpha=10. / num_trajectories, linewidth=1)
+        plt.plot(ts[:len(trajectory_risk)], trajectory_risk, color='blue', alpha=min(1, 10. / num_trajectories), linewidth=1)
 
     # plt.fill_between(ts, risk_lower_bnd, risk_upper_bnd, color='orange', alpha=0.4)
 
@@ -283,7 +302,7 @@ def plot_loss_vs_iteration(
     plt.grid(True)
     plt.tight_layout()
     if save_dir:
-        save_path = os.path.join(save_dir, "loss_vs_iteration.png")
+        save_path = os.path.join(save_dir, "loss_vs_iteration.pdf")
         plt.savefig(save_path, dpi=300)
         print(f"Saved loss plot to {save_path}")
 
@@ -302,13 +321,19 @@ def plot_final_loss_vs_iteration(
     ]
     points = np.array(points)
 
-    plt.figure(figsize=(8, 5))
+    tot = len(trajectories)
+    below_lower_bnd = np.sum(points[:, 1] < args.alpha - args.tightness)
+    above_upper_bnd = np.sum(points[:, 1] > args.alpha)
+    between_bnds = tot - below_lower_bnd - above_upper_bnd
+    print(f"Final loss: {tot} total, {below_lower_bnd} below lower bound, {between_bnds} between bounds, {above_upper_bnd} above upper bound")
+
+    plt.figure(figsize=(7, 4))
     plt.scatter(points[:, 0], points[:, 1], color='blue', alpha=0.6, marker='x')
 
     plt.axhline(args.alpha, linestyle='--', color='#d62728', label=r'Upper Bound $\alpha$', linewidth=1.5)  # red
     plt.axhline(args.alpha - args.tightness, linestyle='--', color='#2ca02c', label=r'Lower Bound $\alpha - \Delta\alpha$', linewidth=1.5)  # green
 
-    plt.xlabel("Stopping Iteration $T$", fontsize=14)
+    plt.xlabel("Stopping Iteration", fontsize=14)
     plt.ylabel("Risk", fontsize=14)
 
     xlim_lower = np.min(points[:, 0]) - 1
@@ -324,71 +349,7 @@ def plot_final_loss_vs_iteration(
     plt.tight_layout()
 
     if save_dir:
-        save_path = os.path.join(save_dir, "final_loss_vs_iteration.png")
+        save_path = os.path.join(save_dir, "final_loss_vs_iteration.pdf")
         plt.savefig(save_path, dpi=300)
         print(f"Saved final loss plot to {save_path}")
 
-
-def run_experiment(
-    Z,
-    width_calculator: WidthCalculator,
-    risk_measure: RiskMeasure,
-    performativity_simulator: PerformativitySimulator,
-    loss_simulator: LossSimulator,
-    args,
-    gammas: List[float] = [0.1, 0.2, 0.5, 1, 1.2, 1.5],
-    save_dir: str = "./figures",
-    num_iters: int = 1000,
-):
-    """
-    Run the RCPP algorithm and plot the results.
-    """
-
-    def cut(data):
-        tot = len(data[0])
-        assert tot > args.N
-        idx = np.random.choice(tot, size=args.N, replace=False)
-        data_cal = [d[idx] for d in data]
-        data_test = [d[~idx] for d in data]
-        return data_cal, data_test
-
-    # plot 1: change gamma, i.e. magnitude of distribution shift
-    gamma_trajectories = []
-    for gamma in gammas:
-        args_copy = deepcopy(args)
-        args_copy.gamma = gamma
-        Z_cal, Z_test = cut(Z)
-        trajectory = run_trajectory(
-            Z_cal,
-            Z_test,
-            width_calculator,
-            risk_measure,
-            performativity_simulator,
-            loss_simulator,
-            args_copy
-        )
-        gamma_trajectories.append(trajectory)
-
-    # Plot 1
-    plot_lambda_vs_iteration(gammas, gamma_trajectories, args, save_dir=save_dir)
-
-    trajectories = []
-    for _ in tqdm(range(num_iters), desc="Running trials"):
-        Z_cal, Z_test = cut(Z)
-        trajectory = run_trajectory(
-            Z_cal,
-            Z_test,
-            width_calculator,
-            risk_measure,
-            performativity_simulator,
-            loss_simulator,
-            args
-        )
-        trajectories.append(trajectory)
-
-    # Plot 2/3: plot risk level v. iteration
-    plot_loss_vs_iteration(trajectories, args, save_dir=save_dir)
-
-    # Plot 4: plot final risk level v. iteration
-    plot_final_loss_vs_iteration(trajectories, args, save_dir=save_dir)
-    

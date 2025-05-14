@@ -5,12 +5,12 @@ from sklearn.linear_model import LogisticRegression
 from rcpp.width_calculator import CLTQuantileVarianceWidth
 from rcpp.risk_measure import CVaRRiskMeasure
 from rcpp.loss_simulator import ZeroUniformLossSimulator
-from rcpp.main import run_experiment
 
 from applications.credit_scoring.utils import (
     load_data,
     create_balanced_split,
     CreditScoringSimulator,
+    run_credit_experiment
 )
 
 
@@ -23,7 +23,7 @@ class Args:
         self.N = 10000            # number of samples in cohort
         self.lambda_max = 1.0    # maximum value for lambda
         self.ell_max = 1.0
-        self.gamma = 0.1         # parameter in the Wasserstein distance formulation, for simulating distribution shift
+        self.gamma = 1.0         # parameter in the Wasserstein distance formulation, for simulating distribution shift
 
         self.beta = 0.9
 
@@ -41,6 +41,7 @@ if __name__ == "__main__":
     model = LogisticRegression(fit_intercept=False)
     model.fit(X_train, Y_train)
     Y_hat = model.predict_proba(X_train)[:,1]
+    Y_hat = Y_hat[Y_train == 1]
     counts, bins, _ = plt.hist(Y_hat, bins=30, density=True, color='skyblue', edgecolor='black', alpha=0.75, label='Histogram of y_hat')
     M = counts.max() # PDF upper bound
     print(f"PDF upper bound = {M}.")
@@ -59,7 +60,7 @@ if __name__ == "__main__":
     risk_measure = CVaRRiskMeasure(args.beta)
     performativity_simulator = CreditScoringSimulator(M=M, beta=args.beta)
     loss_simulator = ZeroUniformLossSimulator()
-    run_experiment(
+    run_credit_experiment(
         Z=[Y_hat, Y],
         width_calculator=width_calculator,
         risk_measure=risk_measure,

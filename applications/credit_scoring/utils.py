@@ -1,9 +1,17 @@
-import numpy as np
+from copy import deepcopy
 from typing import List, Union
+
+import numpy as np
 import pandas as pd
 from sklearn import preprocessing
+from tqdm import tqdm
 
 from rcpp.performativity_simulator import PerformativitySimulator
+from rcpp.main import run_trajectory
+from rcpp.width_calculator import WidthCalculator
+from rcpp.risk_measure import RiskMeasure
+from rcpp.loss_simulator import LossSimulator
+from rcpp.main import plot_lambda_vs_iteration, plot_loss_vs_iteration, plot_final_loss_vs_iteration
 
 
 def create_balanced_split(X_all, Y_all, num_balanced_samples, class1_proportion=0.5):
@@ -173,3 +181,67 @@ def load_data(file_loc):
     Y_all = np.array(data['SeriousDlqin2yrs'])
 
     return X_all, Y_all
+
+
+def run_credit_experiment(
+    Z,
+    width_calculator: WidthCalculator,
+    risk_measure: RiskMeasure,
+    performativity_simulator: PerformativitySimulator,
+    loss_simulator: LossSimulator,
+    args,
+    gammas: List[float] = [0.1, 0.2, 0.5, 1, 1.2, 1.5],
+    save_dir: str = "./figures",
+    num_iters: int = 1000,
+):
+    """
+    Run the RCPP algorithm and plot the results.
+    """
+
+    def cut(data):
+        tot = len(data[0])
+        assert tot > args.N
+        idx = np.random.choice(tot, size=args.N, replace=False)
+        data_cal = [d[idx] for d in data]
+        data_test = [d[~idx] for d in data]
+        return data_cal, data_test
+
+    # plot 1: change gamma, i.e. magnitude of distribution shift
+    gamma_trajectories = []
+    for gamma in gammas:
+        args_copy = deepcopy(args)
+        args_copy.gamma = gamma
+        Z_cal, Z_test = cut(Z)
+        trajectory = run_trajectory(
+            Z_cal,
+            Z_test,
+            width_calculator,
+            risk_measure,
+            performativity_simulator,
+            loss_simulator,
+            args_copy
+        )
+        gamma_trajectories.append(trajectory)
+
+    # Plot 1
+    plot_lambda_vs_iteration(gammas, gamma_trajectories, args, save_dir=save_dir)
+
+    trajectories = []
+    for _ in tqdm(range(num_iters), desc="Running trials"):
+        Z_cal, Z_test = cut(Z)
+        trajectory = run_trajectory(
+            Z_cal,
+            Z_test,
+            width_calculator,
+            risk_measure,
+            performativity_simulator,
+            loss_simulator,
+            args
+        )
+        trajectories.append(trajectory)
+
+    # Plot 2/3: plot risk level v. iteration
+    plot_loss_vs_iteration(trajectories, args, save_dir=save_dir)
+
+    # Plot 4: plot final risk level v. iteration
+    plot_final_loss_vs_iteration(trajectories, args, save_dir=save_dir)
