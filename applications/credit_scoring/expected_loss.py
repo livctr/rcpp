@@ -84,4 +84,3 @@ if __name__ == "__main__":
         save_dir=save_dir,
         num_iters=1000
     )
-
