@@ -204,9 +204,10 @@ def plot_lambda_vs_iteration(
         plt.plot(trajectories[i][0].lambdas, label=label, color=colors[i])
         plt.scatter([len(trajectories[i][0].lambdas)-1], [trajectories[i][0].lambdas[-1]], color=colors[i], marker='x', s=50)
         max_iters = max(max_iters, len(trajectories[i][0].lambdas))
-    plt.xlabel('Iteration', fontsize=14)
-    plt.ylabel(r'$\lambda_t$', fontsize=14)
-    plt.xticks(ticks=range(0, max_iters + 1, 2), labels=[str(i) for i in range(0, max_iters + 1, 2)], fontsize=12)
+    plt.xlabel('Iteration', fontsize=20)
+    plt.ylabel(r'$\lambda_t$', fontsize=20)
+    plt.xticks(ticks=range(0, max_iters + 1, 2), labels=[str(i) for i in range(0, max_iters + 1, 2)], fontsize=14)
+    plt.yticks(fontsize=14)
     plt.ylim(0, 1.1)
     leg = plt.legend(loc='upper right')
     for lh in leg.legend_handles:
@@ -237,9 +238,10 @@ def plot_lambda_vs_iteration(
         plt.axhline(y=trajectories[i][0].delta_lambda, color=colors[i], linestyle='--', linewidth=1.5, alpha=0.7)
 
     # `delta_lambda` is the same for all taus
-    plt.xlabel('Iteration', fontsize=14)
-    plt.xticks(ticks=range(0, max_iters + 1, 2), labels=[str(i) for i in range(0, max_iters + 1, 2)], fontsize=12)
-    plt.ylabel(r'$\lambda_{t-1} - \lambda_t$', fontsize=14)
+    plt.xlabel('Iteration', fontsize=20)
+    plt.xticks(ticks=range(0, max_iters + 1, 2), labels=[str(i) for i in range(0, max_iters + 1, 2)], fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.ylabel(r'$\lambda_{t-1} - \lambda_t$', fontsize=20)
     plt.yscale('symlog', linthresh=1e-5)
     plt.ylim(bottom=-5e-6)
     plt.grid(True)
@@ -285,10 +287,12 @@ def plot_loss_vs_iteration(
     plt.axhline(args.alpha, linestyle='--', color='red', label=r'Upper bound $\alpha$')
     plt.axhline(args.alpha - args.tightness, linestyle='--', color='green', label=r'Lower Bound $\alpha - \Delta\alpha$')
 
-    plt.xlabel("Iteration", fontsize=14)
-    plt.ylabel("Risk", fontsize=14)
+    plt.xlabel("Iteration", fontsize=20)
+    plt.ylabel("Risk", fontsize=20)
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
     plt.ylim(0, 0.5)
-    plt.legend(fontsize=12, loc='lower right')
+    plt.legend(loc='lower right')
     for lh in plt.gca().get_legend().legend_handles:
         lh.set_alpha(1)
     plt.grid(True)
@@ -324,18 +328,19 @@ def plot_final_loss_vs_iteration(
         y_values = end_risks[i]
         x_values = [index] * len(y_values)  # Repeat index for each end_risk value
         plt.scatter(x_values, y_values, marker='x', color=colors[i], alpha=min(1, 10. / len(trajectories)), s=50)
-    plt.xticks(x_indices, taus)
+    plt.xticks(x_indices, taus, fontsize=14)
+    plt.yticks(fontsize=14)
     plt.axhline(args.alpha, linestyle='--', color='#d62728', label=r'Upper Bound $\alpha$', linewidth=1.5)  # red
     plt.axhline(args.alpha - args.tightness, linestyle='--', color='#2ca02c', label=r'Lower Bound $\alpha - \Delta\alpha$', linewidth=1.5)  # green
 
-    plt.xlabel(rf"$\tau$", fontsize=14)
-    plt.ylabel("Risk", fontsize=14)
+    plt.xlabel(rf"$\tau$", fontsize=20)
+    plt.ylabel("Risk", fontsize=20)
 
     ylim_lower = min(0.05 + min([min(risks) for risks in end_risks]), args.alpha - args.tightness * 1.5)
     ylim_upper = max(0.05 + max([max(risks) for risks in end_risks]), args.alpha + args.tightness * 0.5)
     plt.ylim(ylim_lower, ylim_upper)
 
-    plt.legend(fontsize=12)
+    plt.legend()
     plt.grid(True)
     plt.tight_layout()
 
@@ -376,10 +381,12 @@ def plot_final_loss_vs_iteration(
     ax.axhline(args.delta, linestyle='--', color='#1f77b4', label=r'Failure Probability $\delta$', linewidth=1.5)
 
     # Add labels, title, and ticks
-    ax.set_xlabel(rf"$\tau$", fontsize=14)
-    ax.set_ylabel('Relative Frequency', fontsize=14)
+    ax.set_xlabel(rf"$\tau$", fontsize=20)
+    ax.set_ylabel('Relative Frequency', fontsize=20)
     ax.set_xticks(index + bar_width / 2)
     ax.set_xticklabels(taus)
+    ax.tick_params(axis='x', labelsize=14)
+    ax.tick_params(axis='y', labelsize=14)
     ax.legend()
 
     plt.tight_layout()

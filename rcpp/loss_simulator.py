@@ -25,10 +25,11 @@ class LossSimulator(ABC):
 
 class ZeroOneLossSimulator(LossSimulator):
 
-    def calc_loss(self, Z: List[np.ndarray], lambda_: float, do_new_sample: bool = True) -> np.ndarray:
+    def calc_loss(self, Z: List[np.ndarray], lambda_: float, do_new_sample: bool = True, epsilon=1e-4) -> np.ndarray:
         assert len(Z) == 2
         Y_hat, Y = Z
-        return (Y_hat < 1 - lambda_) * (Y == 1)
+        cont_indicator = np.clip( (1 - lambda_ + epsilon - Y_hat) / (2 * epsilon), 0, 1)
+        return cont_indicator * (Y == 1)
   
 
 class ZeroUniformLossSimulator(LossSimulator):
@@ -41,8 +42,9 @@ class ZeroUniformLossSimulator(LossSimulator):
             self.random_losses = np.random.uniform(0, 1, N)
         return self.random_losses
 
-    def calc_loss(self, Z: List[np.ndarray], lambda_: float, do_new_sample: bool = True) -> np.ndarray:
+    def calc_loss(self, Z: List[np.ndarray], lambda_: float, do_new_sample: bool = True, epsilon=1e-4) -> np.ndarray:
         assert len(Z) == 2
         Y_hat, Y = Z
         random_losses = self._get_random_losses(len(Y), do_new_sample)
-        return random_losses * (Y == 1) * (Y_hat < 1 - lambda_)
+        cont_indicator = np.clip( (1 - lambda_ + epsilon - Y_hat) / (2 * epsilon), 0, 1)
+        return random_losses * (Y == 1) * cont_indicator

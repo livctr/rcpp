@@ -58,8 +58,10 @@ if __name__ == "__main__":
 
     # Data stats
     counts, bins, _ = plt.hist(Y_hat[Y == 1], bins=20, density=True, color='skyblue', edgecolor='black', alpha=0.75, label='Histogram of y_hat')
-    plt.xlabel(r'f(x)')
-    plt.ylabel('density')
+    plt.xlabel(r'f(x)', fontsize=20)
+    plt.ylabel('density', fontsize=20)
+    plt.xticks(fontsize=14)
+    plt.yticks(fontsize=14)
     os.makedirs(save_dir, exist_ok=True)
     plt.savefig(save_dir + "density.pdf", dpi=300)
     M = counts.max() # PDF upper bound
