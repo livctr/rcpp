@@ -124,26 +124,24 @@ def create_balanced_split(X_all, Y_all, num_balanced_samples, class1_proportion=
 
 
 class CreditScoringSimulator(PerformativitySimulator):
-    def __init__(self, M, beta = 0.0):
+    def __init__(self, shift_size: float = 0.3):
         """
         Arguments:
         - M: bound on the base distribution PDF of the predictions Y_hat (not the loss)
         - beta: the beta in beta-CVaR, e.g., 0.9 for 90%
         """
-        self.M = M
-        self.beta = beta
+        self.shift_size = shift_size
 
     def simulate_shift(self,
                        Z_base: Union[List[np.ndarray], None],
                        Z_prev: Union[List[np.ndarray], None],
                        lambda_: float,
                        gamma: float) -> List[np.ndarray]:
-        shift_size = gamma / self.M * (1. - self.beta)
         assert len(Z_base) == 2
         Y_hat, Y = Z_base
-        condition = (1 - lambda_) < (Y_hat - shift_size)
+        condition = (1 - lambda_) < (Y_hat - self.shift_size)
         Y_hat_new = Y_hat.copy()
-        Y_hat_new[~condition] -= shift_size
+        Y_hat_new[~condition] -= self.shift_size
         Y_hat_new = np.clip(Y_hat_new, 0, 1)
         return [Y_hat_new, Y]
 
@@ -185,12 +183,12 @@ def load_data(file_loc):
 
 def run_credit_experiment(
     Z,
-    width_calculator: WidthCalculator,
-    risk_measure: RiskMeasure,
-    performativity_simulator: PerformativitySimulator,
-    loss_simulator: LossSimulator,
+    width_calculator,
+    risk_measure,
+    performativity_simulator,
+    loss_simulator,
     args,
-    gammas: List[float] = [0.1, 0.2, 0.5, 1, 1.2, 1.5],
+    taus = [1e-3, 1e-1, 1, 10, 1e2],
     save_dir: str = "./figures",
     num_iters: int = 1000,
 ):
@@ -205,43 +203,36 @@ def run_credit_experiment(
         data_cal = [d[idx] for d in data]
         data_test = [d[~idx] for d in data]
         return data_cal, data_test
-
-    # plot 1: change gamma, i.e. magnitude of distribution shift
-    gamma_trajectories = []
-    for gamma in gammas:
+    
+    tau_trajectories = []
+    for tau in taus:
         args_copy = deepcopy(args)
-        args_copy.gamma = gamma
+        args_copy.tau = tau
         Z_cal, Z_test = cut(Z)
-        trajectory = run_trajectory(
-            Z_cal,
-            Z_test,
-            width_calculator,
-            risk_measure,
-            performativity_simulator,
-            loss_simulator,
-            args_copy
-        )
-        gamma_trajectories.append(trajectory)
+        trajectories = []
+        for _ in tqdm(range(num_iters), desc=f"Running trials for tau={tau}"):
+            trajectory = run_trajectory(
+                Z_cal,
+                Z_test,
+                width_calculator,
+                risk_measure,
+                performativity_simulator,
+                loss_simulator,
+                args_copy
+            )
+            trajectories.append(trajectory)
+        tau_trajectories.append(trajectories)
+    
+    colors = ['blue', 'green', 'red', 'orange', 'black', 'purple', 'brown']
+    
+    # Plot 1/2
+    plot_lambda_vs_iteration(taus, tau_trajectories, colors, args, save_dir=save_dir)
 
-    # Plot 1
-    plot_lambda_vs_iteration(gammas, gamma_trajectories, args, save_dir=save_dir)
+    # Plot 3
+    for i, tau in enumerate(taus):
+        plot_loss_vs_iteration(tau, tau_trajectories[i], colors[i], args, save_dir=save_dir)
+    
+    # Plot 4
+    plot_final_loss_vs_iteration(taus, tau_trajectories, colors, args, save_dir=save_dir)
 
-    trajectories = []
-    for _ in tqdm(range(num_iters), desc="Running trials"):
-        Z_cal, Z_test = cut(Z)
-        trajectory = run_trajectory(
-            Z_cal,
-            Z_test,
-            width_calculator,
-            risk_measure,
-            performativity_simulator,
-            loss_simulator,
-            args
-        )
-        trajectories.append(trajectory)
-
-    # Plot 2/3: plot risk level v. iteration
-    plot_loss_vs_iteration(trajectories, args, save_dir=save_dir)
-
-    # Plot 4: plot final risk level v. iteration
-    plot_final_loss_vs_iteration(trajectories, args, save_dir=save_dir)
+    return tau_trajectories    
