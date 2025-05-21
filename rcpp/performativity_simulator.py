@@ -14,10 +14,10 @@ class PerformativitySimulator(ABC):
 
     @abstractmethod
     def simulate_shift(self,
-                       Z_base: Union[List[np.ndarray], None],
-                       Z_prev: Union[List[np.ndarray], None],
+                       Z_base: Union[List, None],
+                       Z_prev: Union[List, None],
                        lambda_: float,
-                       gamma: float) -> List[np.ndarray]:
+                       gamma: float) -> List:
         """
         Given a deployment threshold `lambda_` and the shift magnitude `gamma`, shifts
         the data (either from `Z_base` or `Z_prev`) to produce a shifted `Z`.

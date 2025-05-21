@@ -200,20 +200,18 @@ def run_credit_experiment(
         tot = len(data[0])
         assert tot > args.N
         idx = np.random.choice(tot, size=args.N, replace=False)
-        data_cal = [d[idx] for d in data]
-        data_test = [d[~idx] for d in data]
-        return data_cal, data_test
-    
+        return idx
+
     tau_trajectories = []
     for tau in taus:
         args_copy = deepcopy(args)
         args_copy.tau = tau
-        Z_cal, Z_test = cut(Z)
+        idx = cut(Z)
         trajectories = []
         for _ in tqdm(range(num_iters), desc=f"Running trials for tau={tau}"):
             trajectory = run_trajectory(
-                Z_cal,
-                Z_test,
+                Z,
+                idx,
                 width_calculator,
                 risk_measure,
                 performativity_simulator,
