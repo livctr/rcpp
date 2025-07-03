@@ -83,6 +83,8 @@ class MarketMakingLossSimulator:
     def __init__(self, rho: float = 100):
         self.rho = rho
 
+        self._volumes = None, None
+
     def calc_loss(self, Z, lambda_: float, do_new_sample: bool = True) -> np.ndarray:
         """
         Given a deployment threshold `lambda_`, calculates the loss of the data `Z`
@@ -102,11 +104,19 @@ class MarketMakingLossSimulator:
         target, pred, volume_on_bid, volume_on_ask = Z
 
         # [TODO]: Can make volume stochastic
+        if do_new_sample or self._volumes is None:
+            # Sample uniformly
+            u = np.random.uniform(0, 1, len(target))
+            stoch_volume_on_bid = (u < volume_on_bid).astype(float)
+            stoch_volume_on_ask = (u < volume_on_ask).astype(float)
+            self._volumes = stoch_volume_on_bid, stoch_volume_on_ask
+        else:
+            stoch_volume_on_bid, stoch_volume_on_ask = self._volumes
 
         counterfactual_bid = pred - self.rho * lambda_ / 2
         counterfactual_ask = pred + self.rho * lambda_ / 2
 
-        profit = volume_on_bid * (target - counterfactual_bid) + volume_on_ask * (counterfactual_ask - target)
+        profit = stoch_volume_on_bid * (target - counterfactual_bid) + stoch_volume_on_ask * (counterfactual_ask - target)
         loss = - profit
         return np.array(loss)
 
@@ -154,7 +164,7 @@ def run_trajectory(
     while True:
 
         # Get past week's data
-        print(f"Week {week.strftime('%Y-%m-%d')}, iter {iter}, lambda_ = {lambda_:.4f}")
+        # print(f"Week {week.strftime('%Y-%m-%d')}, iter {iter}, lambda_ = {lambda_:.4f}")
         df_t = df[(df['Timestamp'] >= week) & (df['Timestamp'] < week + pd.Timedelta(weeks=1))]
         if df_t.empty:
             raise ValueError(f"No data available for week starting {week.strftime('%Y-%m-%d')}.")
@@ -200,12 +210,14 @@ def run_trajectory(
         # 7-8. Stopping condition 
         if control_risk and lambda_new >= lambda_ - delta_lambda:
             lambda_hat = lambda_new
+            # import pdb ; pdb.set_trace()
             break
 
         lambda_ = lambda_new
 
         iter += 1
         if not control_risk and iter >= num_iters:
+            # import pdb ; pdb.set_trace()
             lambda_hat = 0.0
             break
 
@@ -227,27 +239,147 @@ def run_trajectory(
     )
 
 
-
 class Args:
     def __init__(self):
         self.alpha = 0.0         # risk control level
-        self.tightness = 15.0    # tightness parameter, may throw error if too low
+        self.tightness = 10.0    # tightness parameter, may throw error if too low
         self.delta = 0.1        # failure probability or confidence parameter
         self.tau = 1.0           # safety parameter
-        self.N = 60 * 24 - 5            # number of samples in cohort
+        self.N = 60 * 24 * 7 - 5            # number of samples in cohort
         self.lambda_min = 0.0
         self.lambda_safe = 1.0    # maximum value for lambda
-        self.ell_max = 1.0
 
         self.RHO = 100  # Spread, assuming bitcoin is normalized to 100k
         self.SIGMA = 200  # Std of price beliefs, assuming bitcoin is normalized
+
+from copy import deepcopy
+from tqdm import tqdm
+from rcpp.main import plot_loss_vs_iteration, plot_final_loss_vs_iteration
+from typing import List
+import os
+
+
+def plot_lambda_vs_iteration(
+    taus: List[float],
+    trajectories: List[List[Trajectory]],
+    colors: List[str],
+    args,
+    save_dir: str = "./figures"):
+    """
+    Plot the trajectory of lambda over iterations for different tau values.
+    """
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+
+    plt.figure(figsize=(7, 4))
+    max_iters = 0
+    for i in range(len(trajectories)):
+        label = rf"$\tau$ = {taus[i]}" if len(taus) > 1 else None
+        plt.plot(trajectories[i][0].lambdas, label=label, color=colors[i])
+        plt.scatter([len(trajectories[i][0].lambdas)-1], [trajectories[i][0].lambdas[-1]], color=colors[i], marker='x', s=50)
+        max_iters = max(max_iters, len(trajectories[i][0].lambdas))
+    plt.xlabel('Iteration', fontsize=20)
+    plt.ylabel(r'$\lambda_t$', fontsize=20)
+    plt.xticks(ticks=range(0, max_iters + 1, 2), labels=[str(i) for i in range(0, max_iters + 1, 2)], fontsize=14)
+    plt.yticks(fontsize=14)
+    leg = plt.legend(loc='upper right')
+    for lh in leg.legend_handles:
+        lh.set_alpha(1)
+    plt.grid(True)
+    plt.tight_layout()
+    if save_dir:
+        save_path = os.path.join(save_dir, "lambda_vs_iteration.pdf")
+        plt.savefig(save_path, dpi=300)
+        print(f"Saved lambda plot to {save_path}")
+
+    plt.figure(figsize=(7, 4))
+    max_iters = 0
+    for i in range(len(trajectories)):
+        last_diffs = []  # for scatter plot
+        label = rf"$\tau$ = {taus[i]}" if len(taus) > 1 else None
+        diffs = np.abs(trajectories[i][0].lambdas[1:] - trajectories[i][0].lambdas[:-1])
+
+        max_iters = max(max_iters, len(diffs))
+        plt.plot(range(1, len(diffs) + 1), diffs, markersize=2,
+                label=label, color=colors[i])
+        if len(diffs) > 0:
+            last_diffs.append((len(diffs), diffs[-1]))
+        
+        if last_diffs:
+            plt.scatter(*zip(*last_diffs), color=colors[i], marker='x', s=50)
+
+        plt.axhline(y=trajectories[i][0].delta_lambda, color=colors[i], linestyle='--', linewidth=1.5, alpha=0.7)
+
+    # `delta_lambda` is the same for all taus
+    plt.xlabel('Iteration', fontsize=20)
+    plt.xticks(ticks=range(0, max_iters + 1, 2), labels=[str(i) for i in range(0, max_iters + 1, 2)], fontsize=14)
+    plt.yticks(fontsize=14)
+    plt.ylabel(r'$\lambda_{t-1} - \lambda_t$', fontsize=20)
+    plt.yscale('symlog', linthresh=1e-5)
+    plt.ylim(bottom=-5e-6)
+    plt.grid(True)
+    plt.tight_layout()
+    if save_dir:
+        save_path = os.path.join(save_dir, "lambda_diff_vs_iteration.pdf")
+        plt.savefig(save_path, dpi=300)
+        print(f"Saved lambda plot to {save_path}")
+
+
+def run_mm_experiment(
+    df,
+    width_calculator,
+    risk_measure,
+    performativity_simulator,
+    loss_simulator,
+    args,
+    taus = [1, 5, 10, 50, 1e2, 200],
+    save_dir: str = "./figures",
+    num_iters: int = 1000,
+):
+    """
+    Run the RCPP algorithm and plot the results.
+    """
+    tau_trajectories = []
+    for tau in taus:
+        args_copy = deepcopy(args)
+        args_copy.tau = tau
+        trajectories = []
+        for i in tqdm(range(num_iters), desc=f"Running trials for tau={tau}"):
+            np.random.seed(i)
+            trajectory = run_trajectory(
+                df,
+                start_week=datetime(2023, 2, 1),  # Start from the first week of February
+                width_calculator=width_calculator,
+                risk_measure=risk_measure,
+                performativity_simulator=performativity_simulator,
+                loss_simulator=loss_simulator,
+                args=args,
+                control_risk=True,  # Set to False if you want to run without risk control
+                # num_iters=10  # Number of iterations to run
+            )
+            trajectories.append(trajectory)
+        tau_trajectories.append(trajectories)
+    
+    colors = ['blue', 'green', 'red', 'orange', 'black', 'purple', 'brown']
+    
+    # Plot 1/2
+    plot_lambda_vs_iteration(taus, tau_trajectories, colors, args, save_dir=save_dir)
+
+    # Plot 3
+    for i, tau in enumerate(taus):
+        plot_loss_vs_iteration(tau, tau_trajectories[i], colors[i], args, save_dir=save_dir)
+    
+    # Plot 4
+    plot_final_loss_vs_iteration(taus, tau_trajectories, colors, args, save_dir=save_dir)
+
+    return tau_trajectories
 
 
 if __name__ == "__main__":
 
     # We model Z = (target, pred, volume_on_bid, volume_on_ask)
     args = Args()
-    np.random.seed(123)
+    np.random.seed(42)  # 123 0.47582531, 1234 0.48204899, 12345 0.47727013
 
     save_dir = "./applications/market_making/figures/expected_loss/"
 
@@ -266,41 +398,25 @@ if __name__ == "__main__":
     # the ask.
     clt_cal_start, clt_cal_end = "2023-01-01", "2023-01-31"
     df_clt_cal_index = df[(df['Timestamp'] >= clt_cal_start) & (df['Timestamp'] <= clt_cal_end)].index
-    max_clt_var = np.var(target - pred, ddof=1)
+    target_clt_cal = target[df_clt_cal_index]
+    pred_clt_cal = pred[df_clt_cal_index]
+    # import pdb ; pdb.set_trace()
+    max_clt_var = np.var(target_clt_cal - pred_clt_cal, ddof=1)
 
     # Run experiment
     width_calculator = CLTMarketMakingWidth(clt_var=max_clt_var)
     risk_measure = MeanRiskMeasure()
+    mms_simulator = MarketMakingShiftSimulator(rho=args.RHO, sigma=args.SIGMA)
+    loss_simulator = MarketMakingLossSimulator(rho=args.RHO)
 
-    trajectory = run_trajectory(
+    run_mm_experiment(
         df,
-        start_week=datetime(2023, 2, 1),  # Start from the first week of February
         width_calculator=width_calculator,
         risk_measure=risk_measure,
-        performativity_simulator=MarketMakingShiftSimulator(rho=args.RHO, sigma=args.SIGMA),
-        loss_simulator=MarketMakingLossSimulator(rho=args.RHO),
+        performativity_simulator=mms_simulator,
+        loss_simulator=loss_simulator,
         args=args,
-        control_risk=True,  # Set to False if you want to run without risk control
-        num_iters=10  # Number of iterations to run
+        taus=[1e-2, 5e-2, 1e-1, 5e-1, 1],
+        save_dir=save_dir,
+        num_iters=10
     )
-
-    # import pdb ; pdb.set_trace()
-    print(f"Final lambda_hat: {trajectory.lambda_hat}")
-    print(f"Risks at t: {trajectory.risks_tt}")
-    print(f"Risks at t-1: {trajectory.risks_tm1_t}")
-    print(f"Lambdas: {trajectory.lambdas}")
-
-
-    # performativity_simulator = CreditScoringSimulator(shift_size=args.shift_size)
-    # loss_simulator = ZeroOneLossSimulator()
-    # tau_trajectories = run_credit_experiment(
-    #     Z=[Y_hat, Y],
-    #     width_calculator=width_calculator,
-    #     risk_measure=risk_measure,
-    #     performativity_simulator=performativity_simulator,
-    #     loss_simulator=loss_simulator,
-    #     args=args,
-    #     taus=[1e-3, 1e-1, 2e-1, 5e-1, 8e-1, 1, 2],
-    #     save_dir=save_dir,
-    #     num_iters=1000
-    # )

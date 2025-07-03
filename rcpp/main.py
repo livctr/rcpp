@@ -249,6 +249,8 @@ def run_trajectory(
     )
 
 
+from typing import Optional
+
 def plot_lambda_vs_iteration(
     taus: List[float],
     trajectories: List[List[Trajectory]],
