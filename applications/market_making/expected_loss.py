@@ -72,8 +72,14 @@ class MarketMakingShiftSimulator:
         ask = pred + self.rho * lambda_ / 2
 
         # Assume investor belief is a normal distribution with mean target and std sigma
-        volume_on_bid = norm.cdf(bid, loc=target, scale=self.sigma)
-        volume_on_ask = 1 - norm.cdf(ask, loc=target, scale=self.sigma)
+        # volume_on_bid = np.clip((target - bid) / (ask - bid), 0, 1)
+        # volume_on_ask = np.clip((ask - target) / (ask - bid), 0, 1)
+
+        volume_on_bid = np.clip((bid - target + self.sigma) / (2 * self.sigma), 0, 1)
+        volume_on_ask = np.clip((target - ask + self.sigma) / (2 * self.sigma), 0, 1)
+
+        # volume_on_bid = norm.cdf(bid, loc=target, scale=self.sigma)
+        # volume_on_ask = 1 - norm.cdf(ask, loc=target, scale=self.sigma)
 
         return target, pred, volume_on_bid, volume_on_ask
 
@@ -107,14 +113,27 @@ class MarketMakingLossSimulator:
         if do_new_sample or self._volumes is None:
             # Sample uniformly
             u = np.random.uniform(0, 1, len(target))
-            stoch_volume_on_bid = (u < volume_on_bid).astype(float)
-            stoch_volume_on_ask = (u < volume_on_ask).astype(float)
+            # stoch_volume_on_bid = (u < volume_on_bid).astype(float)
+            # stoch_volume_on_ask = (u < volume_on_ask).astype(float)
+            stoch_volume_on_bid = volume_on_bid
+            stoch_volume_on_ask = volume_on_ask
+
+            # # Magnify the difference
+            # diff = volume_on_bid - volume_on_ask
+            # # Normalize the difference to [0, 1]
+            # # import pdb ; pdb.set_trace()
+            # diff = (diff - np.nanmin(diff)) / (np.nanmax(diff) - np.nanmin(diff))
+            # # Use the difference to scale the uniform sample
+            # stoch_volume_on_bid = diff
+            # stoch_volume_on_ask = 1 - diff
             self._volumes = stoch_volume_on_bid, stoch_volume_on_ask
         else:
             stoch_volume_on_bid, stoch_volume_on_ask = self._volumes
 
         counterfactual_bid = pred - self.rho * lambda_ / 2
         counterfactual_ask = pred + self.rho * lambda_ / 2
+
+        # import pdb ; pdb.set_trace()
 
         profit = stoch_volume_on_bid * (target - counterfactual_bid) + stoch_volume_on_ask * (counterfactual_ask - target)
         loss = - profit
@@ -188,6 +207,7 @@ def run_trajectory(
                 return emp_risk + bound + args.tau * (lambda_ - lambda_new) - args.alpha
             loss_simulator.calc_loss(Z_tm1, lambda_, do_new_sample=True)  # Set the randomness
             lambda_mid = binary_search_solver(loss_at_new_lambda, 0, 1)
+            print(f"Iteration {iter}, lambda_mid = {lambda_mid:.4f}, lambda_ = {lambda_:.4f}, loss = {loss_at_new_lambda(lambda_mid):.4f}")
 
             # 6. Set new lambda^{(t)}
             lambda_new = min(lambda_, lambda_mid)
@@ -242,7 +262,7 @@ def run_trajectory(
 class Args:
     def __init__(self):
         self.alpha = 0.0         # risk control level
-        self.tightness = 10.0    # tightness parameter, may throw error if too low
+        self.tightness = 8.0    # tightness parameter, may throw error if too low
         self.delta = 0.1        # failure probability or confidence parameter
         self.tau = 1.0           # safety parameter
         self.N = 60 * 24 * 7 - 5            # number of samples in cohort
@@ -353,7 +373,7 @@ def run_mm_experiment(
                 risk_measure=risk_measure,
                 performativity_simulator=performativity_simulator,
                 loss_simulator=loss_simulator,
-                args=args,
+                args=args_copy,
                 control_risk=True,  # Set to False if you want to run without risk control
                 # num_iters=10  # Number of iterations to run
             )
@@ -409,6 +429,21 @@ if __name__ == "__main__":
     mms_simulator = MarketMakingShiftSimulator(rho=args.RHO, sigma=args.SIGMA)
     loss_simulator = MarketMakingLossSimulator(rho=args.RHO)
 
+    # # import pdb ; pdb.set_trace()
+    # df_tm1 = df[(df['Timestamp'] >= "2023-01-01") & (df['Timestamp'] < "2023-02-01")]
+    # lambdas_shift = [1., 0.86, 0.66, 0.4]  # np.linspace(args.lambda_min, args.lambda_safe, 10)
+    # lambdas_eval = np.linspace(args.lambda_safe, args.lambda_min, 10)
+    # for lambda_ in lambdas_shift:
+    #     for lambda_eval in lambdas_eval:
+    #         target, pred, volume_on_bid, volume_on_ask = mms_simulator.simulate_shift(df_tm1, lambda_=lambda_)
+    #         loss = loss_simulator.calc_loss(
+    #             (target, pred, volume_on_bid, volume_on_ask),
+    #             lambda_=lambda_eval,
+    #             do_new_sample=True
+    #         )
+    #         print(f"Lambda: {lambda_:.4f}, Eval Lambda: {lambda_eval:.4f}, Loss: {np.nanmean(loss):.4f}, Volumes: {np.nanmean(volume_on_bid):.4f}, {np.nanmean(volume_on_ask):.4f}")
+    # exit()
+
     run_mm_experiment(
         df,
         width_calculator=width_calculator,
@@ -416,7 +451,7 @@ if __name__ == "__main__":
         performativity_simulator=mms_simulator,
         loss_simulator=loss_simulator,
         args=args,
-        taus=[1e-2, 5e-2, 1e-1, 5e-1, 1],
+        taus=[0, 10, 100],
         save_dir=save_dir,
         num_iters=10
     )

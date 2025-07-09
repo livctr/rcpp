@@ -358,7 +358,7 @@ def plot_loss_vs_iteration(
     plt.ylabel("Risk", fontsize=20)
     plt.xticks(fontsize=14)
     plt.yticks(fontsize=14)
-    plt.ylim(0, 0.5)
+    # plt.ylim(0, 0.5)
     plt.legend(loc='lower right')
     for lh in plt.gca().get_legend().legend_handles:
         lh.set_alpha(1)
