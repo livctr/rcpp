@@ -82,7 +82,7 @@ if __name__ == "__main__":
         performativity_simulator=performativity_simulator,
         loss_simulator=loss_simulator,
         args=args,
-        taus=[1e-3, 1e-1, 2e-1, 5e-1, 8e-1, 1, 2],
+        taus=[0, 1e-1, 2e-1, 5e-1, 8e-1, 1, 2],
         save_dir=save_dir,
         num_iters=1000
     )

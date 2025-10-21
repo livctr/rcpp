@@ -1,35 +1,27 @@
-# Implementation for Performative Risk Control
-
-This repo implements simulations to analyze and demonstrate performative risk control in credit scoring models.
-
-```
-uv sync
-```
-
+# Performative Risk Control Experiments
 
 ## Setup
 
-To run the credit scoring simulations,
+To run the simulations, first set up a conda environment.
 ```
 conda create -n rcpp python=3.12
 conda activate rcpp
 pip install -r requirements.txt
 ```
 
-Download/unzip the [Kaggle credit scoring dataset](https://www.kaggle.com/c/GiveMeSomeCredit/data) to `applications/credit_scoring/data/` and [Bitcoin historical data](https://www.kaggle.com/datasets/mczielinski/bitcoin-historical-data) to `applications/market_making/data/`. Then, run `python -m applications.market_making.subsample_data` to generate "./applications/market_making/data/btcusd_1-min_data_filtered.csv".
-
-
-
+Download/unzip the [Kaggle credit scoring dataset](https://www.kaggle.com/c/GiveMeSomeCredit/data) to `applications/credit_scoring/data/`.
 
 ## How to run
 
-Finally, to replicate the expected loss and quantile experiments, run the following:
+To run the credit scoring experiments, run:
 ```
 python -m applications.credit_scoring.expected_loss
 python -m applications.credit_scoring.quantile
 ```
 
-Running these commands should create a new folder called `figures/` inside the `credit_scoring` directory.
+To run the forecasting experiment, see the Jupyter notebook located at `applications/forecasting/expected_loss.ipynb`.
+
+Running the above should create a new folder called `figures/` within their respective folders
 
 
 ## References

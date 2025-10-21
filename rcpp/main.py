@@ -13,11 +13,8 @@ from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import List, Dict
+from typing import List
 import os
-
-from copy import deepcopy
-
 
 
 class Trajectory:
@@ -147,72 +144,67 @@ def split(Z, idx):
 
 
 def run_trajectory(
-    Z,
-    idx,
+    data_generator,
+    splitter,
     width_calculator: WidthCalculator,
     risk_measure: RiskMeasure,
     performativity_simulator: PerformativitySimulator,
     loss_simulator: LossSimulator,
     args,
-    control_risk: bool = True,
-    num_iters: int = 10) -> Trajectory:
+) -> Trajectory:
   
     performativity_simulator.reset()
-    # Note: the numbers correspond to the Algorithm in paper
+
     # 1. Initialize lambda^{(0)}
-    if control_risk:
-        lambda_ = args.lambda_safe  # initialize the deployment threshold
-        lambda_hat = lambda_       # deployment threshold to return
-        # Jointly solve for T, delta_prime, and delta_lambda
-        T, delta_lambda = find_guaranteed_T(
+    lambda_ = args.lambda_safe  # initialize the deployment threshold
+    lambda_hat = lambda_       # deployment threshold to return
+
+    control_risk = args.tau > 0
+    if control_risk:  # Controlling risk
+        # 2. Jointly solve for T, delta_prime, and delta_lambda
+        tilde_T, delta_lambda = find_guaranteed_T(
             width_calculator,
             args.delta, args.N, args.tightness, args.tau, args.lambda_safe - args.lambda_min
         )
-        bound = width_calculator.get_width(args.delta / T, args.N)
+        bound = width_calculator.get_width(args.delta / tilde_T, args.N)
     else:
-        lambda_ = 0.0
-        lambda_hat = 0.0
-        T, delta_lambda = -1, -1
+        tilde_T, delta_lambda = -1, -1
 
     lambdas = [lambda_]
     risks_tt = []
     risks_tm1_t = []
-    Z_cal, Z_test = split(Z, idx)
-    Z_tm1 = Z
     iter = 0
 
     while True:
-        # Apply previous threshold lambda^{(t-1)}
-        Z_tm1 = performativity_simulator.simulate_shift(Z, Z_tm1, lambda_, args.gamma)
-        Z_cal_tm1, Z_test_tm1 = split(Z_tm1, idx)
+        # 4. Apply previous threshold lambda^{(t-1)}
+        Z_base = next(data_generator)
+        # _, Z_test = splitter(Z_base)
+        Z_tm1 = performativity_simulator.simulate_shift(Z_base, lambda_)
+        Z_cal_tm1, Z_test_tm1 = splitter(Z_tm1)
 
-        # [tracking] Calculate the realized loss L(lambda^{(t-1)}, lambda^{(t-1)})
+        # [tracking] Calculate the realized risk \hat{R}(lambda^{(t-1)}, lambda^{(t-1)})
         risks_tt.append(
             risk_measure.calculate(
                 loss_simulator.calc_loss(Z_test_tm1, lambda_, do_new_sample=True)
             )
         )
 
-        # 4. Receive samples from previous threshold lambda^{(t-1)}
-        idx = np.random.choice(len(Z_cal_tm1[0]), size=args.N, replace=True) 
-        Z_sample = [Z_[idx] for Z_ in Z_cal_tm1]
+        # # 4. Receive samples from previous threshold lambda^{(t-1)}
 
+        # 5. Find lambda^{(t)}_new
         if control_risk:
-            # 5. Find lambda^{(t)}_mid
             def loss_at_new_lambda(lambda_new):
-                losses = loss_simulator.calc_loss(Z_sample, lambda_new, do_new_sample=False)
+                losses = loss_simulator.calc_loss(Z_cal_tm1, lambda_new, do_new_sample=False)
                 emp_risk = risk_measure.calculate(losses)
                 return emp_risk + bound + args.tau * (lambda_ - lambda_new) - args.alpha
-            loss_simulator.calc_loss(Z_sample, lambda_, do_new_sample=True)  # Set the randomness
+            loss_simulator.calc_loss(Z_cal_tm1, lambda_, do_new_sample=True)  # Set the randomness
             lambda_mid = binary_search_solver(loss_at_new_lambda, 0, 1)
-
-            # 6. Set new lambda^{(t)}
             lambda_new = min(lambda_, lambda_mid)
         else:
             lambda_new = 0.0
         lambdas.append(lambda_new)
 
-        # [tracking] Calculate the realized loss L(lambda^{(t-1)}, lambda^{(t)})
+        # [tracking] Calculate the realized risk \hat{R}(lambda^{(t-1)}, lambda^{(t)})
         risks_tm1_t.append(
             risk_measure.calculate(
                 loss_simulator.calc_loss(Z_test_tm1, lambda_new, do_new_sample=True)
@@ -223,19 +215,21 @@ def run_trajectory(
         if control_risk and lambda_new >= lambda_ - delta_lambda:
             lambda_hat = lambda_new
             break
-
-        lambda_ = lambda_new
-
-        iter += 1
-        if not control_risk and iter >= num_iters:
-            lambda_hat = 0.0
+        if not control_risk:
+            lambda_hat = lambda_new
             break
 
-    # Calculate the L(lambda_hat, lambda_hat)
-    Z_shifted = performativity_simulator.simulate_shift(Z_test, Z_test_tm1, lambda_hat, args.gamma)
+        lambda_ = lambda_new
+        iter += 1
+
+    # Calculate the \hat{R}(lambda_hat, lambda_hat)
+    Z_base = next(data_generator)
+    Z_test = performativity_simulator.simulate_shift(Z_base, lambda_hat)
+    _, Z_test_test = splitter(Z_test)
+
     risks_tt.append(
         risk_measure.calculate(
-            loss_simulator.calc_loss(Z_shifted, lambda_hat, do_new_sample=True)
+            loss_simulator.calc_loss(Z_test_test, lambda_hat, do_new_sample=True)
         )
     )
 
@@ -244,41 +238,113 @@ def run_trajectory(
         risks_tt=risks_tt,
         risks_tm1_t=risks_tm1_t,
         lambdas=lambdas,
-        guaranteed_T=T,
+        guaranteed_T=tilde_T,
         delta_lambda=delta_lambda,
     )
 
 
-from typing import Optional
+def _tau_label(t) -> str:
+    """Legend string for tau; τ=0 → 'no risk control'."""
+    try:
+        is_zero = float(t) == 0.0
+    except Exception:
+        is_zero = str(t).strip() in {"0", "0.0"}
+    return "no risk control" if is_zero else rf"$\tau$ = {t}"
+
 
 def plot_lambda_vs_iteration(
     taus: List[float],
-    trajectories: List[List[Trajectory]],
+    trajectories: List[List["Trajectory"]],
     colors: List[str],
     args,
-    save_dir: str = "./figures"):
+    save_dir: str = "./figures",
+    plot_all: bool = False,
+):
     """
     Plot the trajectory of lambda over iterations for different tau values.
+
+    Args
+    ----
+    taus: list of tau values (one per outer trajectories group).
+    trajectories: list of lists; trajectories[i] is a list of Trajectory objects for taus[i].
+                  Each Trajectory must expose:
+                    - .lambdas: Sequence[float]
+                    - .delta_lambda: float
+    colors: list of colors; colors[i] is used for taus[i].
+    args: object with attribute `lambda_safe` (float), used to set y-limits on the first plot.
+    save_dir: directory to save output PDFs.
+    plot_all: if True, plot every trajectory in each group; if False, only the first trajectory per group.
     """
+    # ----------------------------- safety checks -----------------------------
+    if len(taus) != len(trajectories):
+        raise ValueError(f"len(taus)={len(taus)} must match len(trajectories)={len(trajectories)}")
+    if len(colors) < len(trajectories):
+        raise ValueError(f"Need at least {len(trajectories)} colors, got {len(colors)}")
+
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
 
+    # ======================== Figure 1: λ_t vs iteration =====================
     plt.figure(figsize=(7, 4))
-    plt.ylim(0, args.lambda_safe)
+    # keep this to match your original behavior
+    plt.ylim(0, getattr(args, "lambda_safe", 1.0))
+
     max_iters = 0
-    for i in range(len(trajectories)):
-        label = rf"$\tau$ = {taus[i]}" if len(taus) > 1 else None
-        plt.plot(trajectories[i][0].lambdas, label=label, color=colors[i])
-        plt.scatter([len(trajectories[i][0].lambdas)-1], [trajectories[i][0].lambdas[-1]], color=colors[i], marker='x', s=50)
-        max_iters = max(max_iters, len(trajectories[i][0].lambdas))
-    plt.xlabel('Iteration', fontsize=20)
-    plt.ylabel(r'$\lambda_t$', fontsize=20)
-    plt.xticks(ticks=range(0, max_iters + 1, 2), labels=[str(i) for i in range(0, max_iters + 1, 2)], fontsize=14)
+    for i, traj_list in enumerate(trajectories):
+        subset = traj_list if plot_all else [traj_list[0]]
+        # only label the first plotted line of each τ group
+        label = _tau_label(taus[i]) if len(taus) > 1 else None
+
+
+        for j, traj in enumerate(subset):
+            plt.plot(
+                traj.lambdas,
+                label=label,
+                color=colors[i],
+                alpha=0.6 if plot_all else 1.0,
+                linewidth=1.0 if plot_all else 1.5,
+            )
+            # mark the last point for each plotted trajectory
+            if len(traj.lambdas) > 0:
+                plt.scatter(
+                    [len(traj.lambdas) - 1],
+                    [traj.lambdas[-1]],
+                    color=colors[i],
+                    marker="x",
+                    s=50,
+                )
+            label = None  # avoid duplicate legend labels within the same τ group
+            max_iters = max(max_iters, len(traj.lambdas))
+
+    plt.xlabel("Iteration", fontsize=20)
+    plt.ylabel(r"$\lambda_t$", fontsize=20)
+    # match your original tick style (step=2); guard against empty data
+    step = 2
+    if max_iters > 0:
+        ticks = list(range(0, max_iters + 1, step))
+        plt.xticks(ticks=ticks, labels=[str(t) for t in ticks], fontsize=14)
     plt.yticks(fontsize=14)
-    plt.ylim(0, 1.1)
-    leg = plt.legend(loc='upper right')
-    for lh in leg.legend_handles:
-        lh.set_alpha(1)
+
+    all_lams = []
+    for traj_list in trajectories:
+        subset = traj_list if plot_all else [traj_list[0]]
+        for traj in subset:
+            if len(traj.lambdas):
+                all_lams.extend(traj.lambdas)
+
+    if all_lams:
+        y_max = float(np.max(all_lams))
+    else:
+        y_max = float(getattr(args, "lambda_safe", 1.0))
+
+    pad = max(1e-3, 0.03 * max(1.0, y_max))  # 3% or at least a tiny epsilon
+    plt.ylim(-pad, y_max + pad)              # small negative bottom so 'x' at 0 is visible
+
+    if len(taus) > 1:
+        leg = plt.legend(loc="upper right")
+        for lh in leg.legend_handles:
+            lh.set_alpha(1)
+
     plt.grid(True)
     plt.tight_layout()
     if save_dir:
@@ -286,44 +352,73 @@ def plot_lambda_vs_iteration(
         plt.savefig(save_path, dpi=300)
         print(f"Saved lambda plot to {save_path}")
 
+    # ==================== Figure 2: |λ_{t} - λ_{t-1}| vs it. =================
     plt.figure(figsize=(7, 4))
-    max_iters = 0
-    for i in range(len(trajectories)):
-        last_diffs = []  # for scatter plot
-        label = rf"$\tau$ = {taus[i]}" if len(taus) > 1 else None
-        diffs = np.abs(trajectories[i][0].lambdas[1:] - trajectories[i][0].lambdas[:-1])
+    max_iters_diff = 0
+    max_diff = 0
 
-        max_iters = max(max_iters, len(diffs))
-        plt.plot(range(1, len(diffs) + 1), diffs, markersize=2,
-                label=label, color=colors[i])
-        if len(diffs) > 0:
-            last_diffs.append((len(diffs), diffs[-1]))
-        
-        if last_diffs:
-            plt.scatter(*zip(*last_diffs), color=colors[i], marker='x', s=50)
+    for i, traj_list in enumerate(trajectories):
+        subset = traj_list if plot_all else [traj_list[0]]
+        label = _tau_label(taus[i]) if len(taus) > 1 else None
 
-        plt.axhline(y=trajectories[i][0].delta_lambda, color=colors[i], linestyle='--', linewidth=1.5, alpha=0.7)
+        for j, traj in enumerate(subset):
+            lambdas = np.asarray(traj.lambdas, dtype=float)
+            if lambdas.size < 2:
+                # nothing to diff; skip cleanly
+                label = None
+                continue
 
-    # `delta_lambda` is the same for all taus
-    plt.xlabel('Iteration', fontsize=20)
-    plt.xticks(ticks=range(0, max_iters + 1, 2), labels=[str(i) for i in range(0, max_iters + 1, 2)], fontsize=14)
+            diffs = np.abs(np.diff(lambdas))
+            xs = np.arange(1, len(diffs) + 1)
+
+            plt.plot(
+                xs,
+                diffs,
+                markersize=2,
+                label=label,
+                color=colors[i],
+                alpha=0.6 if plot_all else 1.0,
+                linewidth=1.0 if plot_all else 1.5,
+            )
+            # last-point marker for each trajectory's diff curve
+            plt.scatter(xs[-1], diffs[-1], color=colors[i], marker="x", s=50)
+
+            # per-trajectory delta line (kept from your version)
+            plt.axhline(
+                y=float(traj.delta_lambda),
+                color=colors[i],
+                linestyle="--",
+                linewidth=1.5,
+                alpha=0.7,
+            )
+
+            label = None
+            max_iters_diff = max(max_iters_diff, len(diffs))
+            max_diff = max(max_diff, np.max(diffs))
+
+    plt.xlabel("Iteration", fontsize=20)
+    if max_iters_diff > 0:
+        ticks = list(range(0, max_iters_diff + 1, 2))
+        plt.xticks(ticks=ticks, labels=[str(t) for t in ticks], fontsize=14)
     plt.yticks(fontsize=14)
-    plt.ylabel(r'$\lambda_{t-1} - \lambda_t$', fontsize=20)
-    plt.yscale('symlog', linthresh=1e-5)
-    plt.ylim(bottom=-5e-6)
+    plt.ylabel(r"$|\lambda_{t} - \lambda_{t-1}|$", fontsize=20)
+    plt.yscale("symlog", linthresh=1e-5)
+    plt.ylim(bottom=-5e-6, top=max_diff * 2)
+
     plt.grid(True)
     plt.tight_layout()
     if save_dir:
         save_path = os.path.join(save_dir, "lambda_diff_vs_iteration.pdf")
         plt.savefig(save_path, dpi=300)
-        print(f"Saved lambda plot to {save_path}")
+        print(f"Saved lambda diff plot to {save_path}")
 
 def plot_loss_vs_iteration(
     tau: float,
     trajectories: List[Trajectory],
     color: str,
     args,
-    save_dir: str = "./figures"
+    save_dir: str = "./figures",
+    show_tau_in_legend: bool = True
 ):
     plt.figure(figsize=(7, 4))
 
@@ -347,7 +442,7 @@ def plot_loss_vs_iteration(
                 risks.append(trajectory.risks_tm1_t[j])
             else:
                 endpoints.append((j - offset, trajectory.risks_tt[j]))
-        label = rf"$\tau$ = {tau}" if i == 0 else None
+        label = _tau_label(tau) if i == 0 and show_tau_in_legend else None
         plt.plot(xs, risks, color=color, alpha=min(1, 10. / num_trajectories), linewidth=0.5, label=label)
     plt.scatter(*zip(*endpoints), color=color, alpha=min(1, 10. / num_trajectories), marker='x', s=50)
 
@@ -360,6 +455,24 @@ def plot_loss_vs_iteration(
     plt.yticks(fontsize=14)
     # plt.ylim(0, 0.5)
     plt.legend(loc='lower right')
+    # --- dynamic y-lims with padding so points at 0 aren't clipped ---
+    all_y = []
+    # collect risks you just plotted
+    all_y.extend(risks)  # from the last loop scope; safer to collect within the loop:
+    # (Better) collect during plotting:
+    #   create all_y = [] before the 'for i in range(num_trajectories)' loop,
+    #   then extend(all_y, risks) inside that loop.
+
+    # include reference lines in range
+    all_y.extend([args.alpha, args.alpha - args.tightness])
+
+    if all_y:
+        y_max = float(np.max(all_y))
+    else:
+        y_max = 1.0
+
+    pad = max(1e-3, 0.05 * y_max)    # 5% headroom
+    plt.ylim(-pad, y_max + pad)
     for lh in plt.gca().get_legend().legend_handles:
         lh.set_alpha(1)
     plt.grid(True)
@@ -403,9 +516,15 @@ def plot_final_loss_vs_iteration(
     plt.xlabel(rf"$\tau$", fontsize=20)
     plt.ylabel("Risk", fontsize=20)
 
-    ylim_lower = min(0.05 + min([min(risks) for risks in end_risks]), args.alpha - args.tightness * 1.5)
-    ylim_upper = max(0.05 + max([max(risks) for risks in end_risks]), args.alpha + args.tightness * 0.5)
-    plt.ylim(ylim_lower, ylim_upper)
+    all_risks = [r for sublist in end_risks for r in sublist]
+    all_risks = [r for sublist in end_risks for r in sublist]
+    ymax_data = max(all_risks) if all_risks else 1.0
+    # also respect your bound lines
+    ymax_bound = args.alpha + max(0.0, args.tightness * 0.5)
+    y_max = max(ymax_data, ymax_bound)
+
+    pad = max(1e-3, 0.05 * y_max)   # 5% headroom
+    plt.ylim(-pad, y_max + pad)     # allow small negative so markers at 0 show fully
 
     plt.legend()
     plt.grid(True)
@@ -455,6 +574,9 @@ def plot_final_loss_vs_iteration(
     ax.tick_params(axis='x', labelsize=14)
     ax.tick_params(axis='y', labelsize=14)
     ax.legend()
+
+    ymax_bar = max(in_bounds_frac + out_of_bounds_frac + [args.delta]) + 0.05
+    ax.set_ylim(0, ymax_bar)
 
     plt.tight_layout()
     if save_dir:
