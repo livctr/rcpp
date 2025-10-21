@@ -168,7 +168,9 @@ def run_trajectory(
         )
         bound = width_calculator.get_width(args.delta / tilde_T, args.N)
     else:
-        tilde_T, delta_lambda = -1, -1
+        tilde_T = 1
+        delta_lambda = 1.0
+        bound = width_calculator.get_width(args.delta, args.N)
 
     lambdas = [lambda_]
     risks_tt = []
@@ -192,16 +194,16 @@ def run_trajectory(
         # # 4. Receive samples from previous threshold lambda^{(t-1)}
 
         # 5. Find lambda^{(t)}_new
-        if control_risk:
-            def loss_at_new_lambda(lambda_new):
-                losses = loss_simulator.calc_loss(Z_cal_tm1, lambda_new, do_new_sample=False)
-                emp_risk = risk_measure.calculate(losses)
-                return emp_risk + bound + args.tau * (lambda_ - lambda_new) - args.alpha
-            loss_simulator.calc_loss(Z_cal_tm1, lambda_, do_new_sample=True)  # Set the randomness
-            lambda_mid = binary_search_solver(loss_at_new_lambda, 0, 1)
-            lambda_new = min(lambda_, lambda_mid)
-        else:
-            lambda_new = 0.0
+        # if control_risk:
+        def loss_at_new_lambda(lambda_new):
+            losses = loss_simulator.calc_loss(Z_cal_tm1, lambda_new, do_new_sample=False)
+            emp_risk = risk_measure.calculate(losses)
+            return emp_risk + bound + args.tau * (lambda_ - lambda_new) - args.alpha
+        loss_simulator.calc_loss(Z_cal_tm1, lambda_, do_new_sample=True)  # Set the randomness
+        lambda_mid = binary_search_solver(loss_at_new_lambda, 0, 1)
+        lambda_new = min(lambda_, lambda_mid)
+        # else:
+        #     lambda_new = 0.0
         lambdas.append(lambda_new)
 
         # [tracking] Calculate the realized risk \hat{R}(lambda^{(t-1)}, lambda^{(t)})
@@ -212,12 +214,12 @@ def run_trajectory(
         )
 
         # 7-8. Stopping condition 
-        if control_risk and lambda_new >= lambda_ - delta_lambda:
+        if lambda_new >= lambda_ - delta_lambda:
             lambda_hat = lambda_new
             break
-        if not control_risk:
-            lambda_hat = lambda_new
-            break
+        # if not control_risk:
+        #     lambda_hat = lambda_new
+        #     break
 
         lambda_ = lambda_new
         iter += 1
@@ -244,12 +246,7 @@ def run_trajectory(
 
 
 def _tau_label(t) -> str:
-    """Legend string for tau; τ=0 → 'no risk control'."""
-    try:
-        is_zero = float(t) == 0.0
-    except Exception:
-        is_zero = str(t).strip() in {"0", "0.0"}
-    return "no risk control" if is_zero else rf"$\tau$ = {t}"
+    return rf"$\tau$ = {t}"
 
 
 def plot_lambda_vs_iteration(
