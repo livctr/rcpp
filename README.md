@@ -27,5 +27,3 @@ Running the above should create a new folder called `figures/` within their resp
 ## References
 
 [Credit Fusion and Will Cukierski. Give Me Some Credit. https://kaggle.com/competitions/GiveMeSomeCredit, 2011. Kaggle.](https://www.kaggle.com/c/GiveMeSomeCredit/data)
-
-[Zielak. Bitcoin Historical Data. https://www.kaggle.com/datasets/mczielinski/bitcoin-historical-data, 2025. Kaggle.](https://www.kaggle.com/c/GiveMeSomeCredit/data). Accessed 07/03/2025.

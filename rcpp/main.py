@@ -1,20 +1,15 @@
 """
 Main file for RCPP algorithm. 
 """
+import os
 from typing import List, Tuple
+import numpy as np
+import matplotlib.pyplot as plt
 
 from rcpp.width_calculator import WidthCalculator
 from rcpp.risk_measure import RiskMeasure
 from rcpp.performativity_simulator import PerformativitySimulator
 from rcpp.loss_simulator import LossSimulator
-
-import numpy as np
-from tqdm import tqdm
-
-import matplotlib.pyplot as plt
-import numpy as np
-from typing import List
-import os
 
 
 class Trajectory:
@@ -443,15 +438,8 @@ def plot_loss_vs_iteration(
     plt.yticks(fontsize=14)
     # plt.ylim(0, 0.5)
     plt.legend(loc='lower right')
-    # --- dynamic y-lims with padding so points at 0 aren't clipped ---
     all_y = []
-    # collect risks you just plotted
     all_y.extend(risks)  # from the last loop scope; safer to collect within the loop:
-    # (Better) collect during plotting:
-    #   create all_y = [] before the 'for i in range(num_trajectories)' loop,
-    #   then extend(all_y, risks) inside that loop.
-
-    # include reference lines in range
     all_y.extend([args.alpha, args.alpha - args.tightness])
 
     if all_y:

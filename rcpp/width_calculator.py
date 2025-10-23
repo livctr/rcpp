@@ -16,7 +16,7 @@ class CLTWidth(WidthCalculator):
     """
     Computes the width of the confidence interval using the Central
     Limit Theorem (CLT) for a given empirical risk. Does not assume
-    anything about the loss distribution.
+    anything about the loss distribution except for boundedness.
     """
     def __init__(self, alpha: float, loss_max: float = 1.0, tol=1e-5):
         self.alpha = alpha

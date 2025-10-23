@@ -1,5 +1,4 @@
 from copy import deepcopy
-from functools import partial
 from typing import List, Union
 
 import numpy as np
@@ -9,9 +8,6 @@ from tqdm import tqdm
 
 from rcpp.performativity_simulator import PerformativitySimulator
 from rcpp.main import run_trajectory
-from rcpp.width_calculator import WidthCalculator
-from rcpp.risk_measure import RiskMeasure
-from rcpp.loss_simulator import LossSimulator
 from rcpp.main import plot_lambda_vs_iteration, plot_loss_vs_iteration, plot_final_loss_vs_iteration
 
 

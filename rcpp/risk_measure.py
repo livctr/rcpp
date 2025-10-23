@@ -14,8 +14,7 @@ class RiskMeasure(ABC):
 
 class MeanRiskMeasure(RiskMeasure):
     def calculate(self, losses: np.ndarray) -> float:
-        """Calculates the mean losses.
-        """
+        """Calculates the mean losses."""
         return np.nanmean(losses)
 
 
