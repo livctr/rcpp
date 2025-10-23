@@ -180,7 +180,6 @@ def run_trajectory(
     while True:
         # 4. Apply previous threshold lambda^{(t-1)}
         Z_base = next(data_generator)
-        # _, Z_test = splitter(Z_base)
         Z_tm1 = performativity_simulator.simulate_shift(Z_base, lambda_)
         Z_cal_tm1, Z_test_tm1 = splitter(Z_tm1)
 
@@ -191,10 +190,7 @@ def run_trajectory(
             )
         )
 
-        # # 4. Receive samples from previous threshold lambda^{(t-1)}
-
         # 5. Find lambda^{(t)}_new
-        # if control_risk:
         def loss_at_new_lambda(lambda_new):
             losses = loss_simulator.calc_loss(Z_cal_tm1, lambda_new, do_new_sample=False)
             emp_risk = risk_measure.calculate(losses)
@@ -202,8 +198,6 @@ def run_trajectory(
         loss_simulator.calc_loss(Z_cal_tm1, lambda_, do_new_sample=True)  # Set the randomness
         lambda_mid = binary_search_solver(loss_at_new_lambda, 0, 1)
         lambda_new = min(lambda_, lambda_mid)
-        # else:
-        #     lambda_new = 0.0
         lambdas.append(lambda_new)
 
         # [tracking] Calculate the realized risk \hat{R}(lambda^{(t-1)}, lambda^{(t)})
@@ -213,13 +207,10 @@ def run_trajectory(
             )
         )
 
-        # 7-8. Stopping condition 
+        # 6-7. Stopping condition 
         if lambda_new >= lambda_ - delta_lambda:
             lambda_hat = lambda_new
             break
-        # if not control_risk:
-        #     lambda_hat = lambda_new
-        #     break
 
         lambda_ = lambda_new
         iter += 1
