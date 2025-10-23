@@ -1,5 +1,7 @@
 # Performative Risk Control Experiments
 
+This repo contains the experimental results for [Performative Risk Control](https://arxiv.org/abs/2505.24097) [NeurIPS 2025].
+
 ## Setup
 
 To run the simulations, first set up a conda environment.
